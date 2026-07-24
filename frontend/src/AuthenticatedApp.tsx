@@ -345,6 +345,8 @@ export function AuthenticatedApp() {
     onUnauthorized: handleUnauthorized,
     removeProject,
     selectedProject,
+    selectedProjectMemoryBatch: projectDetail?.memory.latestBatch ?? null,
+    selectedProjectMemoryBatchProjectId: projectDetail?.project.id ?? null,
     selectedProjectId,
     setErrorMessage,
   });
@@ -926,7 +928,12 @@ export function AuthenticatedApp() {
               }
               isProjectMemoryGenerationActive={
                 activeProjectId
-                  ? activeProjectMemoryGenerationIds.has(activeProjectId)
+                  ? activeProjectMemoryGenerationIds.has(activeProjectId) ||
+                    (
+                      projectDetailRenderData.project.id === activeProjectId &&
+                      projectDetailRenderData.memory.latestBatch?.status ===
+                        "generation_in_progress"
+                    )
                   : false
               }
               isProjectMemoryGenerationDelayed={

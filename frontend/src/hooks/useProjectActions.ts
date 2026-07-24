@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { UnauthorizedError } from "../api/client";
 import {
   approveProjectMemory as requestProjectMemoryApproval,
@@ -6,6 +6,7 @@ import {
   deleteProject,
   deleteProjectPromptActivity as requestPromptActivityDeletion,
   deleteProjectSessionActivity as requestSessionActivityDeletion,
+  fetchLatestProjectMemoryBatch,
   fetchProjectSummaries,
   generateProjectMemory as requestProjectMemoryGeneration,
   updateProjectBookmark,
@@ -19,6 +20,8 @@ import { isMockGithubUnlinkedProject } from "../workspace/previewData";
 import type { Project, ProjectSummary } from "../workspace/types";
 
 const PROJECT_MEMORY_REFRESH_TIMEOUT_MS = 15_000;
+const PROJECT_MEMORY_RESUME_POLL_INTERVAL_MS = 2_000;
+const PROJECT_MEMORY_RESUME_RETRY_INTERVAL_MS = 5_000;
 
 export async function settleActivityDeletionRefresh(
   refresh: () => Promise<void>,
@@ -55,6 +58,11 @@ type UseProjectActionsOptions = {
   onUnauthorized: () => void;
   removeProject: (projectId: string) => void;
   selectedProject: Project | null;
+  selectedProjectMemoryBatch: {
+    batchId: string;
+    status: string | null;
+  } | null;
+  selectedProjectMemoryBatchProjectId: string | null;
   selectedProjectId: string | null;
   setErrorMessage: (message: string | null) => void;
 };
@@ -70,6 +78,8 @@ export function useProjectActions({
   onUnauthorized,
   removeProject,
   selectedProject,
+  selectedProjectMemoryBatch,
+  selectedProjectMemoryBatchProjectId,
   selectedProjectId,
   setErrorMessage,
 }: UseProjectActionsOptions) {
@@ -124,7 +134,7 @@ export function useProjectActions({
     }
   };
 
-  const refreshSelectedProjectAfterActivityDeletion = async (projectId: string) => {
+  const refreshSelectedProject = async (projectId: string) => {
     const shouldApplyDetail = () => selectedProjectIdRef.current === projectId;
     const [projectSummaries] = await Promise.all([
       fetchProjectSummaries(),
@@ -143,6 +153,134 @@ export function useProjectActions({
     }
   };
 
+  const selectedProjectMemoryGenerationIsDelayed =
+    selectedProjectMemoryBatchProjectId !== null &&
+    delayedProjectMemoryGenerationIds.has(selectedProjectMemoryBatchProjectId);
+
+  useEffect(() => {
+    const projectId = selectedProjectMemoryBatchProjectId;
+    if (!projectId) {
+      return;
+    }
+
+    const hasGenerationRequest = () =>
+      projectMemoryGenerationRequestsRef.current.has(projectId);
+    const serverGenerationIsActive =
+      selectedProjectMemoryBatch?.status === "generation_in_progress";
+    if (
+      !serverGenerationIsActive &&
+      !selectedProjectMemoryGenerationIsDelayed
+    ) {
+      if (!hasGenerationRequest()) {
+        setActiveProjectMemoryGenerationIds((current) => {
+          if (!current.has(projectId)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(projectId);
+          return next;
+        });
+        setDelayedProjectMemoryGenerationIds((current) => {
+          if (!current.has(projectId)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(projectId);
+          return next;
+        });
+      }
+      return;
+    }
+
+    setActiveProjectMemoryGenerationIds((current) => {
+      if (current.has(projectId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(projectId);
+      return next;
+    });
+
+    let cancelled = false;
+    let pollTimer: number | null = null;
+    let pollController: AbortController | null = null;
+    const schedulePoll = (delayMs: number) => {
+      if (cancelled) {
+        return;
+      }
+      pollTimer = window.setTimeout(() => {
+        void pollGeneration();
+      }, delayMs);
+    };
+    const pollGeneration = async () => {
+      pollController = new AbortController();
+      try {
+        const batch = await fetchLatestProjectMemoryBatch(
+          projectId,
+          pollController.signal,
+        );
+        if (cancelled) {
+          return;
+        }
+        if (batch?.status === "generation_in_progress") {
+          schedulePoll(
+            document.visibilityState === "hidden"
+              ? PROJECT_MEMORY_RESUME_RETRY_INTERVAL_MS
+              : PROJECT_MEMORY_RESUME_POLL_INTERVAL_MS,
+          );
+          return;
+        }
+
+        await refreshSelectedProject(projectId);
+        if (cancelled) {
+          return;
+        }
+        setActiveProjectMemoryGenerationIds((current) => {
+          if (!current.has(projectId)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(projectId);
+          return next;
+        });
+        setDelayedProjectMemoryGenerationIds((current) => {
+          if (!current.has(projectId)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(projectId);
+          return next;
+        });
+      } catch (error) {
+        if (
+          cancelled ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
+        if (error instanceof UnauthorizedError) {
+          onUnauthorized();
+          return;
+        }
+        schedulePoll(PROJECT_MEMORY_RESUME_RETRY_INTERVAL_MS);
+      }
+    };
+
+    schedulePoll(PROJECT_MEMORY_RESUME_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+      }
+      pollController?.abort();
+    };
+  }, [
+    selectedProjectMemoryBatch?.batchId,
+    selectedProjectMemoryBatch?.status,
+    selectedProjectMemoryBatchProjectId,
+    selectedProjectMemoryGenerationIsDelayed,
+  ]);
+
   const deleteSelectedPromptActivity = async (promptEventId: string) => {
     const projectId = selectedProjectIdRef.current;
     if (!projectId) {
@@ -154,7 +292,7 @@ export function useProjectActions({
       return rethrowAfterUnauthorized(error);
     }
     await settleActivityDeletionRefresh(
-      () => refreshSelectedProjectAfterActivityDeletion(projectId),
+      () => refreshSelectedProject(projectId),
       onUnauthorized,
     );
   };
@@ -170,7 +308,7 @@ export function useProjectActions({
       return rethrowAfterUnauthorized(error);
     }
     await settleActivityDeletionRefresh(
-      () => refreshSelectedProjectAfterActivityDeletion(projectId),
+      () => refreshSelectedProject(projectId),
       onUnauthorized,
     );
   };
