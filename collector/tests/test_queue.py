@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 from argparse import Namespace
+import json
+from pathlib import Path
 
 from cli import _push_captured_event
 from events import BaseEvent, PromptSubmittedPayload
@@ -31,6 +32,22 @@ def test_queue_round_trip_and_acknowledgement(tmp_path: Path) -> None:
 
     queue.ack({batch[0]["id"]})
     assert [event["sequence"] for event in queue.read_batch(10)] == [2]
+
+
+def test_queue_quarantines_conflict_before_acknowledging_it(tmp_path: Path) -> None:
+    queue = JSONLQueue(tmp_path / "events.jsonl")
+    queue.push(_event(1))
+    queue.push(_event(2))
+    conflict = queue.read_batch(10)[0]
+
+    conflict_path = queue.quarantine([conflict], reason="sequence conflict")
+
+    assert conflict_path == queue.conflict_path
+    assert [event["sequence"] for event in queue.read_batch(10)] == [2]
+    record = json.loads(conflict_path.read_text(encoding="utf-8"))
+    assert record["conflict"]["reason"] == "sequence conflict"
+    assert record["event"]["id"] == conflict["id"]
+    assert conflict_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_captured_event_is_mirrored_with_the_same_identity(tmp_path: Path) -> None:

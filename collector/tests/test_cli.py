@@ -22,6 +22,8 @@ from cli import (
     main,
 )
 from runtime_install import install_runtime
+from uploader.client import EventBatchConflict
+from uploader.queue import JSONLQueue
 
 
 def test_parser_exposes_expected_commands() -> None:
@@ -309,6 +311,7 @@ def test_doctor_reports_invalid_ingest_credentials(
     monkeypatch.setattr(cli, "read_config", lambda _: {"auth": {}})
     monkeypatch.setattr(cli, "resolve_token", lambda *_: "collector-token")
     monkeypatch.setattr(cli, "_queue_status", lambda _: (True, "empty"))
+    monkeypatch.setattr(cli, "_queue_conflict_status", lambda _: (True, "none"))
     monkeypatch.setattr(cli, "_health_status", lambda *_: (True, "ok"))
     monkeypatch.setattr(cli, "_ingest_auth_status", lambda *_: (False, "HTTP 401"))
     monkeypatch.setattr(cli, "_read_pid", lambda _: 123)
@@ -318,6 +321,17 @@ def test_doctor_reports_invalid_ingest_credentials(
     assert args.func(args) == 1
     output = capsys.readouterr().out
     assert "ingest-auth: needs-action - HTTP 401" in output
+
+
+def test_doctor_reports_quarantined_conflicting_events(tmp_path: Path) -> None:
+    queue_path = tmp_path / "events"
+    conflict_path = tmp_path / "events.conflicts.jsonl"
+    conflict_path.write_text('{"event":{"id":"one"}}\n{"event":{"id":"two"}}\n')
+
+    assert cli._queue_conflict_status(str(queue_path)) == (
+        False,
+        f"2 quarantined event(s) in {conflict_path}",
+    )
 
 
 def test_profile_capture_restarts_a_stopped_uploader(
@@ -501,6 +515,98 @@ def test_start_uploader_restart_reports_stop_failure(
 
     assert args.func(args) == 1
     assert "Promty uploader did not stop in time" in capsys.readouterr().err
+
+
+def test_conflicting_event_isolated_without_blocking_valid_events(
+    tmp_path: Path,
+) -> None:
+    queue = JSONLQueue(tmp_path / "events.jsonl")
+    events = [
+        {
+            "id": f"event-{sequence}",
+            "project_id": "project",
+            "session_id": "session",
+            "sequence": sequence,
+        }
+        for sequence in (1, 2, 3)
+    ]
+    queue.path.write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    class UploaderStub:
+        def upload_events(self, batch: list[dict[str, object]]) -> list[str]:
+            if any(event["id"] == "event-2" for event in batch):
+                raise EventBatchConflict("Event sequence already exists")
+            return [str(event["id"]) for event in batch]
+
+    uploaded_count = cli._upload_event_batch(queue, UploaderStub(), events)  # type: ignore[arg-type]
+
+    assert uploaded_count == 2
+    assert queue.read_batch(10) == []
+    conflict_records = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl.conflicts.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [record["event"]["id"] for record in conflict_records] == ["event-2"]
+
+
+def test_init_retirement_stops_only_verified_legacy_uploader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    legacy_root = tmp_path / ".prompthub"
+    profile_root = legacy_root / "profiles" / "prod"
+    profile_root.mkdir(parents=True)
+    queue_path = profile_root / "events"
+    queue_path.write_text('{"id":"event-1"}\n', encoding="utf-8")
+    (profile_root / "uploader.pid").write_text("94591\n", encoding="utf-8")
+    stopped: list[int] = []
+
+    monkeypatch.setattr(cli, "LEGACY_DATA_ROOT", legacy_root)
+    monkeypatch.setattr(cli, "_pid_is_running", lambda pid: pid == 94591)
+    monkeypatch.setattr(
+        cli,
+        "_process_command",
+        lambda _pid: (
+            "python /tmp/runtime/cli.py upload --watch --interval 2 "
+            f"--queue-path {queue_path}"
+        ),
+    )
+    monkeypatch.setattr(cli, "_stop_uploader_process", stopped.append)
+
+    assert cli._retire_legacy_uploader("prod")
+    assert stopped == [94591]
+    assert not queue_path.exists()
+    assert (
+        profile_root / "events.conflict-legacy-94591.jsonl"
+    ).read_text(encoding="utf-8") == '{"id":"event-1"}\n'
+    assert not (profile_root / "uploader.pid").exists()
+    assert (profile_root / "uploader.pid.stopped-94591").exists()
+
+
+def test_init_retirement_refuses_unrelated_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    legacy_root = tmp_path / ".prompthub"
+    profile_root = legacy_root / "profiles" / "prod"
+    profile_root.mkdir(parents=True)
+    (profile_root / "uploader.pid").write_text("123\n", encoding="utf-8")
+    stopped: list[int] = []
+
+    monkeypatch.setattr(cli, "LEGACY_DATA_ROOT", legacy_root)
+    monkeypatch.setattr(cli, "_pid_is_running", lambda _pid: True)
+    monkeypatch.setattr(cli, "_process_command", lambda _pid: "python unrelated.py")
+    monkeypatch.setattr(cli, "_stop_uploader_process", stopped.append)
+
+    assert not cli._retire_legacy_uploader("prod")
+    assert stopped == []
+    assert "Refusing to stop pid 123" in capsys.readouterr().err
 
 
 def test_runtime_launcher_uses_a_durable_copy(
@@ -874,6 +980,7 @@ def test_doctor_can_check_both_hook_integrations(
     monkeypatch.setattr(cli, "read_config", lambda _: {"auth": {}})
     monkeypatch.setattr(cli, "resolve_token", lambda *_: "collector-token")
     monkeypatch.setattr(cli, "_queue_status", lambda _: (True, "empty"))
+    monkeypatch.setattr(cli, "_queue_conflict_status", lambda _: (True, "none"))
     monkeypatch.setattr(cli, "_health_status", lambda *_: (True, "ok"))
     monkeypatch.setattr(cli, "_ingest_auth_status", lambda *_: (True, "authenticated"))
     monkeypatch.setattr(cli, "_read_pid", lambda _: 123)
