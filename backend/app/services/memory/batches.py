@@ -51,6 +51,10 @@ from app.services.memory.constants import (
     REVIEW_STATE_IGNORED,
 )
 from app.services.memory.draft_payloads import build_memory_draft_payloads_from_context
+from app.services.memory.knowledge import (
+    memory_knowledge_projection_from_metadata,
+    merge_memory_knowledge_projections,
+)
 from app.services.memory.project_memory import (
     generate_project_memory_compilation,
     prepare_project_memory_compilation,
@@ -1756,6 +1760,22 @@ def _consolidated_sections(
     ]
 
 
+def _consolidated_knowledge_projection(
+    chunks: list[GeneratedChunkPayload],
+) -> dict[str, Any]:
+    return merge_memory_knowledge_projections(
+        [
+            memory_knowledge_projection_from_metadata(
+                chunk.metadata,
+                summary=chunk.payload.get("summary"),
+                title=chunk.payload.get("title"),
+            )
+            for chunk in chunks
+            if isinstance(chunk.metadata, dict)
+        ]
+    )
+
+
 def _prepare_project_batch_memory(
     *,
     batch: BatchAttemptSnapshot,
@@ -1851,6 +1871,7 @@ def _prepare_project_batch_memory(
         [item.get("draft_id") for item in batch.snapshot_manifest or [] if isinstance(item, dict)]
     )
     timestamp = utc_now()
+    knowledge_projection = _consolidated_knowledge_projection(chunks)
     return PreparedBatchMemory(
         artifact_id=uuid5(
             NAMESPACE_URL,
@@ -1865,6 +1886,7 @@ def _prepare_project_batch_memory(
             "first_event_at": first_event_at,
             "grouping_mode": batch.grouping_mode,
             "internal_chunk_count": len(chunks),
+            "knowledge_projection": knowledge_projection,
             "last_event_at": last_event_at,
             "memory_batch_id": str(batch.batch_id),
             "memory_scope": "generated",
@@ -1894,6 +1916,7 @@ def _prepared_batch_memory_context(memory: PreparedBatchMemory) -> dict[str, Any
         "draft_type": metadata.get("draft_type"),
         "first_event_at": metadata.get("first_event_at"),
         "id": str(memory.artifact_id),
+        "knowledge_projection": metadata.get("knowledge_projection"),
         "last_event_at": metadata.get("last_event_at"),
         "memory_batch_id": metadata.get("memory_batch_id"),
         "memory_scope": metadata.get("memory_scope"),

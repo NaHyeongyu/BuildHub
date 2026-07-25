@@ -55,6 +55,10 @@ class PromptSubmittedPayload(PayloadModel):
     hook_event_name: str | None = None
     approval_policy: str | None = None
     sandbox_mode: str | None = None
+    submission_context: Literal["idle", "during_output"] | None = None
+    delivery_mode: Literal["unknown", "queued", "interrupt"] | None = None
+    continuation_of: str | None = None
+    root_prompt_event_id: str | None = None
 
 
 class ResponseReceivedPayload(PayloadModel):

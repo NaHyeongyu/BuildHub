@@ -291,6 +291,7 @@ def generate_due_memory_artifacts_for_session(
             "end_sequence": window["end_sequence"],
             "event_row_limit": window["event_row_limit"],
             "materialization_end_sequence": window["materialization_end_sequence"],
+            "memory_slice_kind": window.get("memory_slice_kind") or "continuation",
             "memory_strategy": MEMORY_WINDOW_STRATEGY,
             "prompt_count": len(selected_prompts),
             "slice_index": next_slice_index,
@@ -398,13 +399,21 @@ def _pending_draft_range(artifact: Artifact) -> dict[str, Any]:
     changed_files = (
         evidence.get("changed_files") if isinstance(evidence.get("changed_files"), list) else []
     )
+    events = evidence.get("events") if isinstance(evidence.get("events"), list) else []
+    file_change_event_count = sum(
+        1
+        for event in events
+        if isinstance(event, dict) and event.get("event_type") == "FilesChanged"
+    )
+    if not file_change_event_count and changed_files:
+        file_change_event_count = 1
     first_event_at, last_event_at = _evidence_event_range(evidence)
     return {
         "can_checkpoint": True,
         "draft_id": str(artifact.id),
         "end_sequence": metadata.get("end_sequence"),
         "event_count": metadata.get("event_count") or 0,
-        "file_change_event_count": 1,
+        "file_change_event_count": file_change_event_count,
         "first_event_at": first_event_at or _iso(artifact.created_at),
         "last_event_at": last_event_at or _iso(artifact.updated_at),
         "prompt_count": len(prompts) or len(artifact.prompt_event_ids or []),
@@ -513,6 +522,7 @@ def _pending_draft_generation_context(
                 "changed_files": draft_changed_files,
                 "evidence": evidence,
                 "id": str(draft.id),
+                "memory_slice_kind": metadata.get("memory_slice_kind"),
                 "summary": draft.summary,
                 "title": draft.title,
             }

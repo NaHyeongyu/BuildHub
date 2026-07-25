@@ -17,7 +17,7 @@ scale, and PostgreSQL keeps ownership checks, deletion, and privacy transactions
 |---|---|
 | `id` | Stable UUID for the projected node. |
 | `project_id` | Ownership and query boundary. |
-| `kind` | `prompt`, `response`, `file`, `memory`, and later `decision` or `requirement`. |
+| `kind` | `prompt`, `response`, `file`, `decision`, `requirement`, `brainstorm`, `open_question`, or `memory`. |
 | `source_type`, `source_id` | Link back to the authoritative record. Files use a stable source key. |
 | `label`, `safe_summary` | Display-safe graph content only. |
 | `occurred_at`, `sequence` | Deterministic ordering. |
@@ -35,7 +35,7 @@ responses, secrets, or patches into this table.
 |---|---|
 | `id`, `project_id` | Stable identity and ownership boundary. |
 | `source_node_id`, `target_node_id` | Directed relationship endpoints. |
-| `relation` | `answered_by`, `changed`, `captured_in`, `references`, or a later typed relation. |
+| `relation` | `answered_by`, `changed`, `captured_in`, `derived_from`, `references`, or `supersedes`. |
 | `evidence_type` | `recorded`, `inferred`, or `user`. |
 | `confidence` | Required for inferred relationships; absent for recorded facts. |
 | `evidence_source_id`, `source_version` | Explains why the relationship exists. |
@@ -44,6 +44,12 @@ responses, secrets, or patches into this table.
 
 Every inferred edge must retain its evidence and confidence. User acceptance or rejection creates
 an explicit state change; it must never overwrite a recorded edge.
+
+The current read projection stores each node's `confirmed` or `rejected`
+review state in the locked generated-memory artifact's `metadata_`. The review
+update is transactional with the authoritative memory and intentionally does
+not create an `ArtifactVersion`; separate materialized graph tables can be
+introduced later if their operational value justifies them.
 
 ### Embeddings and projection queue
 

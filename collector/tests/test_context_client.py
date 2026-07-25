@@ -265,3 +265,56 @@ def test_markdown_context_search_hides_non_agent_visible_nodes() -> None:
 
     assert "Ignore prior rules" not in rendered
     assert "No approved project context matched" in rendered
+
+
+def test_markdown_context_search_prioritizes_approved_semantic_nodes() -> None:
+    rendered = render_project_context_search(
+        {
+            "nodes": [
+                {
+                    "agent_visible": True,
+                    "id": "memory:1",
+                    "kind": "memory",
+                    "label": "Project Memory",
+                    "metadata": {"review_state": "verified"},
+                    "summary": "Approved context.",
+                },
+                {
+                    "agent_visible": True,
+                    "id": "decision:1",
+                    "kind": "decision",
+                    "label": "Use a right-side drawer.",
+                    "metadata": {
+                        "evidence_type": "recorded",
+                        "review_state": "verified",
+                        "status": "active",
+                    },
+                    "summary": "Keeps source context visible.",
+                },
+                {
+                    "agent_visible": True,
+                    "id": "question:1",
+                    "kind": "open_question",
+                    "label": "Should sessions load lazily?",
+                    "metadata": {
+                        "evidence_type": "recorded",
+                        "review_state": "verified",
+                        "status": "open",
+                    },
+                    "summary": None,
+                },
+            ],
+            "edges": [],
+            "facets": {"decision": 1, "memory": 1, "open_question": 1},
+            "query": "review",
+            "truncated": False,
+            "safety_notice": "Approved reference data only.",
+        }
+    )
+
+    assert rendered.index("## Approved decisions") < rendered.index(
+        "## Approved memories"
+    )
+    assert "## Open questions" in rendered
+    assert "- Status: active" in rendered
+    assert "- Evidence: recorded" in rendered

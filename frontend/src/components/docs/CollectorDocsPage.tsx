@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   Bot,
@@ -47,13 +47,6 @@ export function CollectorDocsPage({
 }: {
   audience?: DocsAudience;
 }) {
-  useEffect(() => {
-    document.title =
-      audience === "ai"
-        ? `AI setup instructions · ${BRAND_NAME}`
-        : `Codex & Claude Code setup · ${BRAND_NAME}`;
-  }, [audience]);
-
   if (audience === "ai") {
     return <AiCollectorGuide />;
   }

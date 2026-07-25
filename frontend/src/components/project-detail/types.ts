@@ -250,6 +250,8 @@ export type PromptFileChange = {
 };
 
 export type PromptActivityItem = {
+  continuationOf?: string | null;
+  deliveryMode?: "unknown" | "queued" | "interrupt" | null;
   fileChanges: PromptFileChange[];
   filesChanged: number;
   id: string;
@@ -264,9 +266,16 @@ export type PromptActivityItem = {
   responseSource?: string | null;
   responseStorageLimit?: number | null;
   responseTruncated?: boolean;
+  rootPromptEventId?: string | null;
   sequence: number;
   sessionId: string;
+  submissionContext?: "idle" | "during_output" | null;
   submittedAt: string;
+};
+
+export type PromptWorkGroup = {
+  id: string;
+  prompts: PromptActivityItem[];
 };
 
 export type PromptActivityPage = {

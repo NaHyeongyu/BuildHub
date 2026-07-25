@@ -19,7 +19,7 @@ import webbrowser
 from environment import migrate_legacy_data_root
 
 from adapters import normalize_collector_event, should_ignore_collector_event
-from change_tracking import ChangeBaselineStore, detect_changes
+from change_tracking import ChangeBaselineStore, derive_prompt_lineage, detect_changes
 from config import (
     DEFAULT_UPLOADER_LOG_PATH,
     DEFAULT_UPLOADER_PID_PATH,
@@ -35,6 +35,7 @@ from events import (
     TOOL_ALIASES,
     BaseEvent,
     FilesChangedPayload,
+    PromptSubmittedPayload,
     SupportedTool,
     normalize_event_type,
     normalize_tool,
@@ -43,8 +44,10 @@ from file_lock import locked_file
 from payloads import (
     PROJECT_CONTEXT_KEYS,
     SESSION_ID_KEYS,
+    TURN_ID_KEYS,
     WORKSPACE_KEYS,
     get_first_string,
+    get_first_value,
 )
 from runtime_install import install_runtime, launcher_path, quote_command_path
 from mcp_server import PromtyMCPServer, run_mcp_server
@@ -435,6 +438,25 @@ def capture(args: argparse.Namespace) -> int:
         event=event,
         raw_payload=payload,
     )
+    baseline_store = ChangeBaselineStore(args.change_baseline_path)
+    previous_baseline = None
+    prompt_lineage: tuple[str | None, str | None] | None = None
+    if event.event_type == "PromptSubmitted":
+        previous_baseline = baseline_store.find_latest(
+            tool=normalized_tool,
+            external_session_id=external_session_id,
+            cwd=get_first_string(payload, WORKSPACE_KEYS) or os.getcwd(),
+        )
+        prompt_lineage = derive_prompt_lineage(event.id, previous_baseline)
+        if isinstance(event.payload, PromptSubmittedPayload):
+            event.payload.submission_context = (
+                "during_output" if previous_baseline is not None else "idle"
+            )
+            event.payload.delivery_mode = "unknown"
+            (
+                event.payload.continuation_of,
+                event.payload.root_prompt_event_id,
+            ) = prompt_lineage
     SequenceStore(args.sequence_path).assign(event)
     _push_captured_event(args, event)
     _remember_session(
@@ -445,12 +467,14 @@ def capture(args: argparse.Namespace) -> int:
         raw_payload=payload,
     )
     if event.event_type == "PromptSubmitted":
-        ChangeBaselineStore(args.change_baseline_path).observe_prompt(
+        baseline_store.observe_prompt(
             tool=normalized_tool,
             event=event,
             raw_payload=payload,
             external_session_id=external_session_id,
             cwd=get_first_string(payload, WORKSPACE_KEYS) or os.getcwd(),
+            previous_baseline=previous_baseline,
+            lineage=prompt_lineage,
         )
     return 0
 
@@ -491,16 +515,17 @@ def capture_changes(args: argparse.Namespace) -> int:
     )
 
     store = ChangeBaselineStore(args.change_baseline_path)
-    baseline = store.find_latest(
+    baseline = store.find_for_turn(
         tool=normalized_tool,
         external_session_id=external_session_id,
         cwd=cwd,
+        turn_id=get_first_value(payload, TURN_ID_KEYS),
     )
     if not baseline:
         return 0
 
     result = detect_changes(baseline, cwd)
-    store.mark_consumed(str(baseline["id"]))
+    store.mark_consumed_with_ancestors(str(baseline["id"]))
     if result is None:
         return 0
 
@@ -1091,9 +1116,7 @@ def start_uploader(args: argparse.Namespace) -> int:
     pid_path = Path(args.pid_path).expanduser() if args.pid_path else DEFAULT_UPLOADER_PID_PATH
     log_path = Path(args.log_path).expanduser() if args.log_path else DEFAULT_UPLOADER_LOG_PATH
     config_path = (
-        str(Path(args.config_path).expanduser())
-        if getattr(args, "config_path", None)
-        else None
+        str(Path(args.config_path).expanduser()) if getattr(args, "config_path", None) else None
     )
     restart = bool(getattr(args, "restart", False))
     with locked_file(pid_path.with_name(f"{pid_path.name}.start.lock")):
@@ -1435,14 +1458,8 @@ def _init_single_profile(args: argparse.Namespace) -> int:
 
     print("Promty init complete")
     profile_option = f" --profile {args.profile}" if args.profile else ""
-    print(
-        "Verify setup: "
-        f"npx promty-collector@latest doctor --tool {args.tool}{profile_option}"
-    )
-    print(
-        "After Project Memory is reviewed: "
-        f"npx promty-collector@latest context{profile_option}"
-    )
+    print(f"Verify setup: npx promty-collector@latest doctor --tool {args.tool}{profile_option}")
+    print(f"After Project Memory is reviewed: npx promty-collector@latest context{profile_option}")
     return 0
 
 

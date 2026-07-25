@@ -203,7 +203,7 @@ def test_retry_reuses_successful_and_empty_chunk_progress(monkeypatch) -> None:
 def test_chunk_concurrency_setting_defaults_bounded_and_supports_aliases(monkeypatch) -> None:
     monkeypatch.delenv("PROMTY_MEMORY_WORKER_CHUNK_CONCURRENCY", raising=False)
     monkeypatch.delenv("PROMTY_MEMORY_WORKER_CHUNK_CONCURRENCY", raising=False)
-    assert Settings().memory_worker_chunk_concurrency == 2
+    assert Settings().memory_worker_chunk_concurrency == 1
 
     monkeypatch.setenv("PROMTY_MEMORY_WORKER_CHUNK_CONCURRENCY", "4")
     assert Settings().memory_worker_chunk_concurrency == 4

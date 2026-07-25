@@ -159,7 +159,7 @@ def test_multi_session_memory_prefilter_runs_only_complete_first_windows(
 ) -> None:
     project_id = uuid4()
     due_session_id = uuid4()
-    incomplete_session_id = uuid4()
+    reasoning_session_id = uuid4()
     finalized_session_id = uuid4()
     generated: list[tuple[UUID, bool]] = []
     monkeypatch.setattr(events_service, "memory_slice_prompt_target", lambda: 1)
@@ -187,13 +187,13 @@ def test_multi_session_memory_prefilter_runs_only_complete_first_windows(
             ),
             _event(
                 project_id=project_id,
-                session_id=incomplete_session_id,
+                session_id=reasoning_session_id,
                 sequence=1,
             ),
             _event(
                 event_type="ResponseReceived",
                 project_id=project_id,
-                session_id=incomplete_session_id,
+                session_id=reasoning_session_id,
                 sequence=2,
             ),
             _event(
@@ -225,10 +225,63 @@ def test_multi_session_memory_prefilter_runs_only_complete_first_windows(
     assert sorted(generated, key=lambda item: str(item[0])) == sorted(
         [
             (due_session_id, False),
+            (reasoning_session_id, False),
             (finalized_session_id, True),
         ],
         key=lambda item: str(item[0]),
     )
+
+
+def test_memory_prefilter_skips_empty_or_metadata_only_responses(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = uuid4()
+    empty_response_session_id = uuid4()
+    metadata_only_session_id = uuid4()
+    generated: list[tuple[UUID, bool]] = []
+    monkeypatch.setattr(events_service, "memory_slice_prompt_target", lambda: 1)
+    monkeypatch.setattr(
+        events_service,
+        "generate_due_memory_artifacts_for_session",
+        lambda _db, session, *, finalize: generated.append((session.id, finalize)),
+    )
+
+    add_events(
+        db,
+        [
+            _event(
+                project_id=project_id,
+                session_id=empty_response_session_id,
+                sequence=1,
+            ),
+            _event(
+                event_type="ResponseReceived",
+                payload={
+                    "response": "",
+                    "response_original_length": 0,
+                    "success": True,
+                },
+                project_id=project_id,
+                session_id=empty_response_session_id,
+                sequence=2,
+            ),
+            _event(
+                project_id=project_id,
+                session_id=metadata_only_session_id,
+                sequence=1,
+            ),
+            _event(
+                event_type="ResponseReceived",
+                payload={"success": True},
+                project_id=project_id,
+                session_id=metadata_only_session_id,
+                sequence=2,
+            ),
+        ],
+    )
+
+    assert generated == []
 
 
 def test_late_prompt_can_complete_a_window_after_response_and_files(

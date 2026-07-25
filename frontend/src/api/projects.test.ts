@@ -29,6 +29,19 @@ describe("project metadata API", () => {
     );
   });
 
+  it("backs off project memory status polling to a ten-second ceiling", async () => {
+    const { projectMemoryPollDelayMs } = await import("./projects");
+
+    expect([0, 1, 2, 3, 4, 20].map(projectMemoryPollDelayMs)).toEqual([
+      2_000,
+      4_000,
+      8_000,
+      10_000,
+      10_000,
+      10_000,
+    ]);
+  });
+
   it("sends the signed review and non-destructive prompt exclusions", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
@@ -94,10 +107,43 @@ describe("project metadata API", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8011/api/projects/project%2Fid/context-graph?limit=40&q=authentication+flow",
+      "http://127.0.0.1:8011/api/projects/project%2Fid/context-graph?limit=40&view=knowledge&q=authentication+flow",
       expect.objectContaining({
         credentials: "include",
         signal: controller.signal,
+      }),
+    );
+  });
+
+  it("updates a project-scoped knowledge node review", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          node_id: "knowledge:artifact:candidate",
+          review_state: "confirmed",
+          reviewed_at: "2026-07-24T01:00:00Z",
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+          status: 200,
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { reviewProjectContextGraphNode } = await import("./projects");
+
+    await reviewProjectContextGraphNode(
+      "project/id",
+      "knowledge:artifact:candidate",
+      "confirm",
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8011/api/projects/project%2Fid/context-graph/nodes/knowledge%3Aartifact%3Acandidate/review",
+      expect.objectContaining({
+        body: JSON.stringify({ action: "confirm" }),
+        credentials: "include",
+        method: "PATCH",
       }),
     );
   });

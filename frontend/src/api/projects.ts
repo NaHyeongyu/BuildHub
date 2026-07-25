@@ -79,6 +79,10 @@ export type ProjectContextGraphNodeKind =
   | "prompt"
   | "response"
   | "file"
+  | "decision"
+  | "requirement"
+  | "brainstorm"
+  | "open_question"
   | "memory";
 
 export type ProjectContextGraphNode = {
@@ -97,7 +101,9 @@ export type ProjectContextGraphEdgeKind =
   | "answered_by"
   | "changed"
   | "captured_in"
-  | "references";
+  | "derived_from"
+  | "references"
+  | "supersedes";
 
 export type ProjectContextGraphEdge = {
   id: string;
@@ -116,6 +122,17 @@ export type ProjectContextGraphResponse = {
   truncated: boolean;
 };
 
+export type ProjectContextGraphNodeReviewAction =
+  | "confirm"
+  | "reject"
+  | "reset";
+
+export type ProjectContextGraphNodeReviewResponse = {
+  node_id: string;
+  review_state: "confirmed" | "rejected" | "unreviewed";
+  reviewed_at: string | null;
+};
+
 export type ProjectCreatePayload = {
   default_branch?: string | null;
   description?: string | null;
@@ -124,7 +141,18 @@ export type ProjectCreatePayload = {
 };
 
 const PROJECT_MEMORY_GENERATION_TIMEOUT_MS = 10 * 60 * 1_000;
-const PROJECT_MEMORY_POLL_INTERVAL_MS = 2_000;
+const PROJECT_MEMORY_POLL_BASE_INTERVAL_MS = 2_000;
+const PROJECT_MEMORY_POLL_MAX_INTERVAL_MS = 10_000;
+
+export function projectMemoryPollDelayMs(attempt: number) {
+  const boundedAttempt = Number.isFinite(attempt)
+    ? Math.max(0, Math.min(8, Math.trunc(attempt)))
+    : 0;
+  return Math.min(
+    PROJECT_MEMORY_POLL_MAX_INTERVAL_MS,
+    PROJECT_MEMORY_POLL_BASE_INTERVAL_MS * 2 ** boundedAttempt,
+  );
+}
 
 function projectMemoryIdempotencyStorageKey(projectId: string) {
   return `promty:project-memory-batch:${projectId}`;
@@ -465,6 +493,7 @@ export async function generateProjectMemory(
     PROJECT_MEMORY_GENERATION_TIMEOUT_MS,
   );
   let response: ProjectMemoryGenerationResponse | undefined;
+  let pollAttempt = 0;
 
   try {
     response = await requestJson<ProjectMemoryGenerationResponse>(
@@ -486,9 +515,10 @@ export async function generateProjectMemory(
     );
     while (response.status === "generation_in_progress") {
       await waitForProjectMemoryPoll(
-        PROJECT_MEMORY_POLL_INTERVAL_MS,
+        projectMemoryPollDelayMs(pollAttempt),
         controller.signal,
       );
+      pollAttempt += 1;
       response = await requestJson<ProjectMemoryGenerationResponse>(
         `/api/projects/${encodeURIComponent(projectId)}/memory/batches/${encodeURIComponent(
           response.batch_id,
@@ -573,6 +603,7 @@ export function fetchProjectContextGraph(
     ? Math.min(40, Math.max(1, Math.trunc(limit)))
     : 40;
   const params = new URLSearchParams({ limit: String(boundedLimit) });
+  params.set("view", "knowledge");
   if (query?.trim()) {
     params.set("q", query.trim());
   }
@@ -582,6 +613,24 @@ export function fetchProjectContextGraph(
     {
       errorMessage: "Context graph request failed",
       unauthorizedMessage: "Sign in again before loading the context graph.",
+    },
+  );
+}
+
+export function reviewProjectContextGraphNode(
+  projectId: string,
+  nodeId: string,
+  action: ProjectContextGraphNodeReviewAction,
+): Promise<ProjectContextGraphNodeReviewResponse> {
+  return requestJsonBody<ProjectContextGraphNodeReviewResponse>(
+    `/api/projects/${encodeURIComponent(
+      projectId,
+    )}/context-graph/nodes/${encodeURIComponent(nodeId)}/review`,
+    "PATCH",
+    { action },
+    {
+      errorMessage: "Knowledge node review update failed",
+      unauthorizedMessage: "Sign in again before reviewing project knowledge.",
     },
   );
 }

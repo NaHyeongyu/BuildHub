@@ -129,10 +129,13 @@
     scrollbar-gutter: auto;
   }
 
-  .bh-prompt-change-detail,
-  .bh-session-detail {
+  .bh-activity-layout .bh-activity-feed-layout > .bh-prompt-change-detail,
+  .bh-activity-layout .bh-activity-feed-layout > .bh-prompt-work-detail,
+  .bh-activity-layout .bh-activity-feed-layout > .bh-session-detail {
     position: static;
+    height: auto;
     max-height: none;
+    overflow: visible;
   }
 
   .bh-prompt-row,

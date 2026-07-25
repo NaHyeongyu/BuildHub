@@ -254,6 +254,8 @@ class PromptFileChangeResponse(StrictResponse):
 
 
 class ProjectPromptActivityResponse(StrictResponse):
+    continuation_of: str | None = None
+    delivery_mode: Literal["unknown", "queued", "interrupt"] | None = None
     file_changes: list[PromptFileChangeResponse]
     files_changed: int
     id: str
@@ -268,8 +270,10 @@ class ProjectPromptActivityResponse(StrictResponse):
     response_source: str | None = None
     response_storage_limit: int | None = None
     response_truncated: bool = False
+    root_prompt_event_id: str | None = None
     sequence: int
     session_id: str | None
+    submission_context: Literal["idle", "during_output"] | None = None
     submitted_at: str | None
 
 

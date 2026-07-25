@@ -170,7 +170,15 @@ def _compact_markdown_text(value: Any, *, limit: int) -> str | None:
 
 def _node_sort_key(node: dict[str, Any]) -> tuple[int, str, str]:
     kind = node.get("kind")
-    kind_rank = 0 if kind in {"memory", "project_memory"} else 1 if kind == "file" else 2
+    kind_rank = {
+        "decision": 0,
+        "requirement": 1,
+        "open_question": 2,
+        "brainstorm": 3,
+        "memory": 4,
+        "project_memory": 4,
+        "file": 5,
+    }.get(kind, 6)
     label = node.get("label") if isinstance(node.get("label"), str) else ""
     node_id = node.get("id") if isinstance(node.get("id"), str) else ""
     return kind_rank, label.casefold(), node_id
@@ -274,6 +282,16 @@ def render_project_context_search(payload: dict[str, Any]) -> str:
             sequence = node.get("sequence")
             if isinstance(sequence, int) and not isinstance(sequence, bool):
                 lines.append(f"- Sequence: {sequence}")
+            metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+            status = _compact_markdown_text(metadata.get("status"), limit=40)
+            evidence_type = _compact_markdown_text(
+                metadata.get("evidence_type"),
+                limit=40,
+            )
+            if status:
+                lines.append(f"- Status: {status}")
+            if evidence_type:
+                lines.append(f"- Evidence: {evidence_type}")
             provenance = _edge_provenance(
                 edges=edges,
                 node_id=str(node.get("id") or ""),
@@ -283,9 +301,33 @@ def render_project_context_search(payload: dict[str, Any]) -> str:
                 lines.append("- Provenance:")
                 lines.extend(f"  - {item}" for item in provenance)
 
+    append_nodes(
+        "Approved decisions",
+        [node for node in other_nodes if node.get("kind") == "decision"],
+    )
+    append_nodes(
+        "Approved requirements",
+        [node for node in other_nodes if node.get("kind") == "requirement"],
+    )
+    append_nodes(
+        "Open questions",
+        [node for node in other_nodes if node.get("kind") == "open_question"],
+    )
+    append_nodes(
+        "Discarded or exploratory ideas",
+        [node for node in other_nodes if node.get("kind") == "brainstorm"],
+    )
     append_nodes("Approved memories", memory_nodes)
     append_nodes("Referenced files", file_nodes)
-    append_nodes("Other approved context", other_nodes)
+    append_nodes(
+        "Other approved context",
+        [
+            node
+            for node in other_nodes
+            if node.get("kind")
+            not in {"decision", "requirement", "open_question", "brainstorm"}
+        ],
+    )
     if payload.get("truncated") is True:
         lines.extend(["", "Results were truncated. Narrow the query for more specific context."])
     return "\n".join(lines).rstrip() + "\n"

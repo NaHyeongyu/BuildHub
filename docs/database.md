@@ -167,9 +167,10 @@ configuration budgets at most 7 connections for the API process (`5 + 2`) and
 of 10 connections per deployment. Keep `max_connections` headroom for Alembic,
 backups, health checks, and operator sessions when changing these values.
 
-The Project Memory worker generates at most two draft chunks concurrently by
-default. Set `PROMTY_MEMORY_WORKER_CHUNK_CONCURRENCY` (or its `PROMTY_`
-alias) to tune this independently of the database pool. Each source draft is
+The Project Memory worker generates one draft chunk at a time by default so the
+API, worker, and local PostgreSQL can safely share a small production instance.
+Set `PROMTY_MEMORY_WORKER_CHUNK_CONCURRENCY` to tune this independently of the
+database pool on a larger worker host. Each source draft is
 marked `sent_to_ai_at` before provider work starts. Provider calls, failed
 batches, and interrupted worker leases are never retried; a new batch can only
 claim draft sources that have never been sent to AI.

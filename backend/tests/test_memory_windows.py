@@ -135,7 +135,7 @@ def test_due_memory_window_does_not_scan_latest_event_below_target(
     assert db.statements[0]._limit_clause.value == 3
 
 
-def test_due_final_window_requires_response_and_file_after_latest_prompt(
+def test_due_final_window_classifies_response_only_as_reasoning(
     monkeypatch,
 ) -> None:
     session = _session()
@@ -146,6 +146,8 @@ def test_due_final_window_requires_response_and_file_after_latest_prompt(
         _event("ResponseReceived", 6, {"response": "done"}),
         latest_event,
     ]
+    reasoning_latest_event = _event("ResponseReceived", 6, {"response": "done"})
+    reasoning_events = [prompt, reasoning_latest_event]
     monkeypatch.setattr(windows, "memory_slice_prompt_target", lambda: 2)
 
     valid = windows.due_memory_window(
@@ -158,8 +160,9 @@ def test_due_final_window_requires_response_and_file_after_latest_prompt(
         QueueDB(
             [prompt],
             prompt,
-            _event("ResponseReceived", 6, {"response": "done"}),
+            reasoning_latest_event,
             (True, False),
+            reasoning_events,
         ),
         session,
         after_sequence=3,
@@ -168,10 +171,13 @@ def test_due_final_window_requires_response_and_file_after_latest_prompt(
 
     assert valid is not None
     assert valid["reason"] == "session_finalized"
+    assert valid["memory_slice_kind"] == "implementation"
     assert valid["start_sequence"] == 4
     assert valid["end_sequence"] == 7
     assert valid["events"] == valid_events
-    assert missing_files is None
+    assert missing_files is not None
+    assert missing_files["memory_slice_kind"] == "reasoning"
+    assert missing_files["events"] == reasoning_events
 
 
 def test_memory_slice_state_reads_artifacts_once() -> None:

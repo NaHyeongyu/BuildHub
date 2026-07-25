@@ -1,4 +1,4 @@
-import type { PromptActivityItem } from "./types";
+import type { PromptActivityItem, PromptWorkGroup } from "./types";
 
 export type WorkType = "brainstorming" | "work";
 export type WorkTypeFilter = "all" | WorkType;
@@ -68,4 +68,22 @@ export function workTypeCounts<T extends { filesChanged: number }>(
   }
 
   return counts;
+}
+
+export function buildPromptWorkGroups(
+  prompts: PromptActivityItem[],
+): PromptWorkGroup[] {
+  const groups = new Map<string, PromptActivityItem[]>();
+  for (const prompt of prompts) {
+    const rootId = prompt.rootPromptEventId ?? prompt.id;
+    const groupId = `${prompt.sessionId}:${rootId}`;
+    const groupPrompts = groups.get(groupId) ?? [];
+    groupPrompts.push(prompt);
+    groups.set(groupId, groupPrompts);
+  }
+
+  return [...groups.entries()].map(([id, groupPrompts]) => ({
+    id,
+    prompts: groupPrompts.sort(sortPromptsForFlow),
+  }));
 }

@@ -15,10 +15,6 @@ import {
 import { MarketingShell } from "./MarketingShell";
 import "./about.css";
 
-const ABOUT_TITLE = "About Promty — Keep AI project context moving";
-const ABOUT_DESCRIPTION =
-  "Promty turns completed AI coding work into reviewable Project Memory, so every human and AI agent can continue with the right decisions and next steps.";
-
 const contextTaxMoments = [
   {
     number: "01",
@@ -330,40 +326,6 @@ function ReviewDemo() {
 }
 
 export function AboutPage() {
-  useEffect(() => {
-    const previousTitle = document.title;
-    const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
-    const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
-    const openGraphUrl = document.querySelector<HTMLMetaElement>('meta[property="og:url"]');
-    const openGraphTitle = document.querySelector<HTMLMetaElement>('meta[property="og:title"]');
-    const openGraphDescription = document.querySelector<HTMLMetaElement>(
-      'meta[property="og:description"]',
-    );
-    const previousCanonical = canonical?.href;
-    const previousDescription = description?.content;
-    const previousOpenGraphUrl = openGraphUrl?.content;
-    const previousOpenGraphTitle = openGraphTitle?.content;
-    const previousOpenGraphDescription = openGraphDescription?.content;
-
-    document.title = ABOUT_TITLE;
-    canonical?.setAttribute("href", "https://promty.org/about");
-    description?.setAttribute("content", ABOUT_DESCRIPTION);
-    openGraphUrl?.setAttribute("content", "https://promty.org/about");
-    openGraphTitle?.setAttribute("content", ABOUT_TITLE);
-    openGraphDescription?.setAttribute("content", ABOUT_DESCRIPTION);
-
-    return () => {
-      document.title = previousTitle;
-      if (previousCanonical) canonical?.setAttribute("href", previousCanonical);
-      if (previousDescription) description?.setAttribute("content", previousDescription);
-      if (previousOpenGraphUrl) openGraphUrl?.setAttribute("content", previousOpenGraphUrl);
-      if (previousOpenGraphTitle) openGraphTitle?.setAttribute("content", previousOpenGraphTitle);
-      if (previousOpenGraphDescription) {
-        openGraphDescription?.setAttribute("content", previousOpenGraphDescription);
-      }
-    };
-  }, []);
-
   return (
     <MarketingShell appearance="figma" current="about">
       <div className="about-page">

@@ -34,7 +34,10 @@ Promty currently uses a pull-request-style memory pipeline:
 
 - Collector events are normalized and stored in PostgreSQL JSONB.
 - Pending `MemoryDraft` evidence packages are created after 20 user prompts, `SessionEnded`, or 1 hour without a new prompt.
-- A pending draft is created only after the latest prompt has both a `ResponseReceived` payload with response text and a `FilesChanged` marker.
+- A pending draft requires a non-empty `ResponseReceived` payload after the
+  latest prompt. A later `FilesChanged` event classifies it as an
+  `implementation` slice; without a file event it is a `reasoning` slice, so
+  requirements, decisions, alternatives, and open questions are not dropped.
 - Encrypted raw events remain the source of truth. Pending drafts store a bounded,
   patch-free evidence projection and size metadata needed for one-time AI
   generation; provider inputs have independent per-field and total byte budgets.
@@ -45,6 +48,11 @@ Promty currently uses a pull-request-style memory pipeline:
   the batch and returns `202`; a separate worker generates bounded chunks,
   checkpoints each successful provider result, and marks consumed drafts only
   after finalization.
+- The same provider response produces the user-facing memory and a bounded
+  semantic projection. There is no second knowledge-extraction model call.
+- Inferred semantic nodes can be confirmed or excluded from the Context Graph.
+  Reviews are versioned with the source memory; rejected nodes are omitted from
+  the next Project Memory compilation.
 - Generated `MemoryTask` artifacts are shown in History and can be edited or removed through the memory APIs.
 - Artifact generation is recorded in `artifact_generation_jobs`.
 - Project Memory is compiled from generated and user-edited memories, not pending drafts.
@@ -78,10 +86,9 @@ The response reports configured providers and active generators without returnin
 ## Next Build Order
 
 1. Add generated-memory CRUD coverage for every History action.
-2. Store embeddings for generated `MemoryTask` artifacts in pgvector.
-3. Add semantic project-memory search.
-4. Build a Context Builder that retrieves generated memories, prompts, diffs, commits, and changed files.
-5. Add Project Chat with cited answers from actual project history.
+2. Measure keyword retrieval quality and graph size before adding embeddings.
+3. Materialize semantic nodes only when read-projection latency justifies it.
+4. Add reviewed task-specific context packs and cited Project Chat answers.
 
 ## Memory Artifact
 

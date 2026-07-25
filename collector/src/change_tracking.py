@@ -66,6 +66,22 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def derive_prompt_lineage(
+    event_id: str,
+    previous_baseline: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    if previous_baseline is None:
+        return None, event_id
+
+    previous_prompt_event_id = previous_baseline.get("prompt_event_id")
+    continuation_of = (
+        str(previous_prompt_event_id) if previous_prompt_event_id is not None else None
+    )
+    root_value = previous_baseline.get("root_prompt_event_id") or continuation_of
+    root_prompt_event_id = str(root_value) if root_value is not None else None
+    return continuation_of, root_prompt_event_id
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -591,15 +607,27 @@ class ChangeBaselineStore:
         raw_payload: dict[str, Any],
         external_session_id: str | None,
         cwd: str | None,
+        previous_baseline: dict[str, Any] | None = None,
+        lineage: tuple[str | None, str | None] | None = None,
     ) -> None:
-        snapshot = capture_git_snapshot(cwd)
-        if snapshot is None:
-            return
+        inherited_snapshot = (
+            previous_baseline.get("snapshot")
+            if isinstance(previous_baseline, dict)
+            and isinstance(previous_baseline.get("snapshot"), dict)
+            else None
+        )
+        snapshot = inherited_snapshot or capture_git_snapshot(cwd)
 
+        continuation_of, root_prompt_event_id = lineage or derive_prompt_lineage(
+            event.id,
+            previous_baseline,
+        )
         record = {
             "id": event.id,
             "tool": tool,
             "prompt_event_id": event.id,
+            "continuation_of": continuation_of,
+            "root_prompt_event_id": root_prompt_event_id,
             "project_id": event.project_id,
             "session_id": event.session_id,
             "external_session_id": external_session_id,
@@ -615,13 +643,14 @@ class ChangeBaselineStore:
             self._prune(data)
             self._write(data)
 
-    def find_latest(
+    def _select_candidates(
         self,
         *,
         tool: str,
         external_session_id: str | None,
         cwd: str | None,
-    ) -> dict[str, Any] | None:
+        turn_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         git_root = resolve_git_root(cwd) if cwd else None
         with self._locked():
             records = list((self._read().get("records") or {}).values())
@@ -632,15 +661,63 @@ class ChangeBaselineStore:
                 continue
             if record.get("tool") != tool:
                 continue
-            if external_session_id and record.get("external_session_id") == external_session_id:
-                candidates.append(record)
+            if turn_id is not None and str(record.get("turn_id")) != turn_id:
+                continue
+            if external_session_id:
+                if record.get("external_session_id") == external_session_id:
+                    candidates.append(record)
                 continue
             record_git_root = (record.get("snapshot") or {}).get("git_root")
             if git_root and record_git_root == git_root:
                 candidates.append(record)
 
         candidates.sort(key=lambda record: str(record.get("created_at") or ""))
+        return candidates
+
+    def find_latest(
+        self,
+        *,
+        tool: str,
+        external_session_id: str | None,
+        cwd: str | None,
+    ) -> dict[str, Any] | None:
+        candidates = self._select_candidates(
+            tool=tool,
+            external_session_id=external_session_id,
+            cwd=cwd,
+        )
         return candidates[-1] if candidates else None
+
+    def find_for_turn(
+        self,
+        *,
+        tool: str,
+        external_session_id: str | None,
+        cwd: str | None,
+        turn_id: Any,
+    ) -> dict[str, Any] | None:
+        if turn_id is None:
+            return self.find_latest(
+                tool=tool,
+                external_session_id=external_session_id,
+                cwd=cwd,
+            )
+
+        candidates = self._select_candidates(
+            tool=tool,
+            external_session_id=external_session_id,
+            cwd=cwd,
+            turn_id=str(turn_id),
+        )
+        return (
+            candidates[-1]
+            if candidates
+            else self.find_latest(
+                tool=tool,
+                external_session_id=external_session_id,
+                cwd=cwd,
+            )
+        )
 
     def mark_consumed(self, record_id: str) -> None:
         with self._locked():
@@ -648,6 +725,27 @@ class ChangeBaselineStore:
             record = (data.get("records") or {}).get(record_id)
             if isinstance(record, dict):
                 record["consumed_at"] = utc_now_iso()
+                self._prune(data)
+                self._write(data)
+
+    def mark_consumed_with_ancestors(self, record_id: str) -> None:
+        with self._locked():
+            data = self._read()
+            records = data.get("records") or {}
+            consumed_at = utc_now_iso()
+            current_id: str | None = record_id
+            seen: set[str] = set()
+            changed = False
+            while current_id and current_id not in seen:
+                seen.add(current_id)
+                record = records.get(current_id)
+                if not isinstance(record, dict):
+                    break
+                record["consumed_at"] = consumed_at
+                changed = True
+                continuation_of = record.get("continuation_of")
+                current_id = str(continuation_of) if continuation_of else None
+            if changed:
                 self._prune(data)
                 self._write(data)
 

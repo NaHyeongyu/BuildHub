@@ -1304,7 +1304,7 @@ export function MemoryPanel({
             className="bh-memory-document-section"
             aria-label={t("memory.generation")}
           >
-            {hasPendingDocumentation ? (
+            {hasPendingDocumentation || isGenerationActive ? (
               <article
                 aria-busy={isGenerationActive || undefined}
                 className="bh-memory-document-request"
@@ -1312,17 +1312,23 @@ export function MemoryPanel({
               >
                 <div className="bh-memory-document-row-main">
                   <h3>{t("memory.ready")}</h3>
-                  <div className="bh-memory-request-metrics">
-                    <span>
-                      <strong>{pendingPromptCount.toLocaleString()}</strong>
-                      {pendingPromptCount === 1 ? "prompt" : "prompts"}
-                    </span>
-                    <span>
-                      <strong>{pendingSessionCount.toLocaleString()}</strong>
-                      {pendingSessionCount === 1 ? "session" : "sessions"}
-                    </span>
-                  </div>
-                  <p>{pendingDateRange ?? t("memory.readyDescription")}</p>
+                  {hasPendingDocumentation ? (
+                    <>
+                      <div className="bh-memory-request-metrics">
+                        <span>
+                          <strong>{pendingPromptCount.toLocaleString()}</strong>
+                          {pendingPromptCount === 1 ? "prompt" : "prompts"}
+                        </span>
+                        <span>
+                          <strong>{pendingSessionCount.toLocaleString()}</strong>
+                          {pendingSessionCount === 1 ? "session" : "sessions"}
+                        </span>
+                      </div>
+                      <p>{pendingDateRange ?? t("memory.readyDescription")}</p>
+                    </>
+                  ) : (
+                    <p>{t("memory.creatingDescription")}</p>
+                  )}
                 </div>
                 <div className="bh-memory-generation-action">
                   <button
