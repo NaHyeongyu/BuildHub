@@ -1311,11 +1311,7 @@ export function MemoryPanel({
                 data-generating={isGenerationActive ? "true" : "false"}
               >
                 <div className="bh-memory-document-row-main">
-                  <h3>
-                    {isGenerationActive
-                      ? t("memory.creating")
-                      : t("memory.ready")}
-                  </h3>
+                  <h3>{t("memory.ready")}</h3>
                   {hasPendingDocumentation ? (
                     <>
                       <div className="bh-memory-request-metrics">

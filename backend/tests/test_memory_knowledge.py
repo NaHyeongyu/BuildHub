@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.services.memory.knowledge import (
     build_memory_knowledge_projection,
     memory_knowledge_projection_from_metadata,
@@ -91,6 +93,24 @@ def test_memory_knowledge_projection_merge_deduplicates_stable_candidates() -> N
     assert merged["nodes"] == projection["nodes"]
 
 
+def test_memory_knowledge_projection_uses_fallback_for_empty_source_ids() -> None:
+    draft = _thinking_draft()
+    draft["details"]["decisions"][0]["source_event_ids"] = []
+
+    projection = build_memory_knowledge_projection(draft)
+
+    decision = next(node for node in projection["nodes"] if node["kind"] == "decision")
+    assert decision["source_event_ids"] == ["event-1", "event-2"]
+
+
+def test_memory_knowledge_projection_merge_respects_limit() -> None:
+    projection = build_memory_knowledge_projection(_thinking_draft())
+
+    merged = merge_memory_knowledge_projections([projection], limit=1)
+
+    assert len(merged["nodes"]) == 1
+
+
 def test_memory_knowledge_projection_backfills_older_structured_metadata() -> None:
     draft = _thinking_draft()
     projection = memory_knowledge_projection_from_metadata(
@@ -128,9 +148,10 @@ def test_memory_knowledge_projection_records_and_resets_user_review() -> None:
 
     assert confirmed["review_state"] == "confirmed"
     assert confirmed["reviewed_by"] == "user-1"
-    assert metadata["knowledge_projection"]["nodes"] != confirmed_metadata[
-        "knowledge_projection"
-    ]["nodes"]
+    assert (
+        metadata["knowledge_projection"]["nodes"]
+        != confirmed_metadata["knowledge_projection"]["nodes"]
+    )
 
     reset_metadata, reset = review_memory_knowledge_projection(
         confirmed_metadata,
@@ -143,3 +164,16 @@ def test_memory_knowledge_projection_records_and_resets_user_review() -> None:
     assert "review_state" not in reset
     assert "reviewed_at" not in reset
     assert reset_metadata["review_state"] == "generated"
+
+
+def test_memory_knowledge_review_rejects_unknown_candidate() -> None:
+    projection = build_memory_knowledge_projection(_thinking_draft())
+
+    with pytest.raises(ValueError):
+        review_memory_knowledge_projection(
+            {"knowledge_projection": projection},
+            candidate_id="missing",
+            review_state="confirmed",
+            reviewed_at="2026-07-24T01:00:00+00:00",
+            reviewed_by="user-1",
+        )

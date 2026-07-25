@@ -56,6 +56,8 @@ export function applyRouteSeo(route: AppRoute) {
     upsertMeta("name", "twitter:description", "The requested Promty page could not be found.");
     removeCanonical();
     document.querySelector<HTMLMetaElement>('meta[property="og:url"]')?.remove();
+    document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.remove();
+    document.querySelector<HTMLMetaElement>('meta[name="twitter:image"]')?.remove();
     return;
   }
 

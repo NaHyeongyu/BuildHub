@@ -56,11 +56,11 @@ test("memory generation resumes from server state after a page reload", async ({
       name: "Updating project memory",
     });
     await expect(updatingButton).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Creating project memory").first()).toBeVisible();
+    await expect(page.getByText("Creating project memory")).toBeVisible();
 
     await page.reload();
     await expect(updatingButton).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Creating project memory").first()).toBeVisible();
+    await expect(page.getByText("Creating project memory")).toBeVisible();
 
     const requestCountBeforeCompletion = latestBatchRequestCount;
     generationCompleted = true;

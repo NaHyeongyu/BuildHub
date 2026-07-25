@@ -167,9 +167,13 @@ export function useProjectActions({
       projectMemoryGenerationRequestsRef.current.has(projectId);
     const serverGenerationIsActive =
       selectedProjectMemoryBatch?.status === "generation_in_progress";
+    const serverGenerationIsDelayed =
+      selectedProjectMemoryBatch?.status === "generation_delayed";
+    const generationIsDelayed =
+      selectedProjectMemoryGenerationIsDelayed || serverGenerationIsDelayed;
     if (
       !serverGenerationIsActive &&
-      !selectedProjectMemoryGenerationIsDelayed
+      !generationIsDelayed
     ) {
       if (!hasGenerationRequest()) {
         setActiveProjectMemoryGenerationIds((current) => {
@@ -193,11 +197,29 @@ export function useProjectActions({
     }
 
     setActiveProjectMemoryGenerationIds((current) => {
-      if (current.has(projectId)) {
+      const shouldBeActive =
+        serverGenerationIsActive && !generationIsDelayed;
+      if (current.has(projectId) === shouldBeActive) {
         return current;
       }
       const next = new Set(current);
-      next.add(projectId);
+      if (shouldBeActive) {
+        next.add(projectId);
+      } else {
+        next.delete(projectId);
+      }
+      return next;
+    });
+    setDelayedProjectMemoryGenerationIds((current) => {
+      if (current.has(projectId) === generationIsDelayed) {
+        return current;
+      }
+      const next = new Set(current);
+      if (generationIsDelayed) {
+        next.add(projectId);
+      } else {
+        next.delete(projectId);
+      }
       return next;
     });
 
@@ -228,6 +250,26 @@ export function useProjectActions({
               ? PROJECT_MEMORY_RESUME_RETRY_INTERVAL_MS
               : PROJECT_MEMORY_RESUME_POLL_INTERVAL_MS,
           );
+          return;
+        }
+        if (batch?.status === "generation_delayed") {
+          setActiveProjectMemoryGenerationIds((current) => {
+            if (!current.has(projectId)) {
+              return current;
+            }
+            const next = new Set(current);
+            next.delete(projectId);
+            return next;
+          });
+          setDelayedProjectMemoryGenerationIds((current) => {
+            if (current.has(projectId)) {
+              return current;
+            }
+            const next = new Set(current);
+            next.add(projectId);
+            return next;
+          });
+          schedulePoll(PROJECT_MEMORY_RESUME_RETRY_INTERVAL_MS);
           return;
         }
 

@@ -155,17 +155,13 @@ def _safe_file_metadata(value: dict[str, Any], *, path: str) -> dict[str, Any]:
         else value.get("deletions_delta")
         if isinstance(value.get("deletions_delta"), int)
         else None,
-        "old_path": value.get("old_path")
-        if isinstance(value.get("old_path"), str)
-        else None,
+        "old_path": value.get("old_path") if isinstance(value.get("old_path"), str) else None,
         "patch_omitted_reason": value.get("patch_omitted_reason")
         if isinstance(value.get("patch_omitted_reason"), str)
         else None,
         "patch_truncated": value.get("patch_truncated") is True,
         "path": path,
-        "status": value.get("status")
-        if isinstance(value.get("status"), str)
-        else "changed",
+        "status": value.get("status") if isinstance(value.get("status"), str) else "changed",
     }
 
 
@@ -329,7 +325,9 @@ def _memory_node(artifact: Artifact) -> dict[str, Any]:
     }
 
 
-def _knowledge_nodes_from_memory(artifact: Artifact) -> list[dict[str, Any]]:
+def _knowledge_nodes_from_memory(
+    artifact: Artifact,
+) -> list[tuple[dict[str, Any], list[str]]]:
     metadata = artifact.metadata_ if isinstance(artifact.metadata_, dict) else {}
     projection = memory_knowledge_projection_from_metadata(
         metadata,
@@ -342,7 +340,7 @@ def _knowledge_nodes_from_memory(artifact: Artifact) -> list[dict[str, Any]]:
     if not isinstance(candidates, list):
         return []
 
-    nodes: list[dict[str, Any]] = []
+    nodes: list[tuple[dict[str, Any], list[str]]] = []
     for candidate in candidates[:MAX_MEMORY_KNOWLEDGE_NODES]:
         if not isinstance(candidate, dict):
             continue
@@ -373,35 +371,41 @@ def _knowledge_nodes_from_memory(artifact: Artifact) -> list[dict[str, Any]]:
             else "unreviewed"
         )
         nodes.append(
-            {
-                "agent_visible": False,
-                "id": f"knowledge:{artifact.id}:{candidate_id}",
-                "kind": subtype,
-                "label": _clip(label, 160) or subtype.replace("_", " ").title(),
-                "metadata": {
-                    "confidence": confidence if isinstance(confidence, (int, float)) else None,
-                    "artifact_review_state": _review_state(artifact),
-                    "evidence_type": (
-                        "confirmed"
-                        if candidate_review_state == "confirmed"
-                        else "inferred"
-                    ),
-                    "review_state": candidate_review_state,
-                    "reviewed_at": candidate.get("reviewed_at")
-                    if isinstance(candidate.get("reviewed_at"), str)
-                    else None,
-                    "source_event_count": len(source_event_ids),
-                    "status": candidate.get("status")
-                    if isinstance(candidate.get("status"), str)
-                    else None,
-                    "subtype": subtype,
+            (
+                {
+                    "agent_visible": False,
+                    "id": f"knowledge:{artifact.id}:{candidate_id}",
+                    "kind": subtype,
+                    "label": _clip(label, 160) or subtype.replace("_", " ").title(),
+                    "metadata": {
+                        "confidence": (
+                            confidence if isinstance(confidence, (int, float)) else None
+                        ),
+                        "artifact_review_state": _review_state(artifact),
+                        "evidence_type": (
+                            "confirmed" if candidate_review_state == "confirmed" else "inferred"
+                        ),
+                        "review_state": candidate_review_state,
+                        "reviewed_at": (
+                            candidate.get("reviewed_at")
+                            if isinstance(candidate.get("reviewed_at"), str)
+                            else None
+                        ),
+                        "source_event_count": len(source_event_ids),
+                        "status": (
+                            candidate.get("status")
+                            if isinstance(candidate.get("status"), str)
+                            else None
+                        ),
+                        "subtype": subtype,
+                    },
+                    "occurred_at": _iso(artifact.updated_at or artifact.created_at),
+                    "sequence": None,
+                    "session_id": (str(artifact.session_id) if artifact.session_id else None),
+                    "summary": _clip(candidate.get("summary"), 800),
                 },
-                "occurred_at": _iso(artifact.updated_at or artifact.created_at),
-                "sequence": None,
-                "session_id": str(artifact.session_id) if artifact.session_id else None,
-                "summary": _clip(candidate.get("summary"), 800),
-                "source_event_ids": source_event_ids,
-            }
+                source_event_ids,
+            )
         )
     return nodes
 
@@ -450,8 +454,7 @@ def _knowledge_records_for_view(
     records: list[KnowledgeRecord] = []
     truncated = False
     for artifact in ordered_memories:
-        for knowledge_node in _knowledge_nodes_from_memory(artifact):
-            source_event_ids = knowledge_node.pop("source_event_ids")
+        for knowledge_node, source_event_ids in _knowledge_nodes_from_memory(artifact):
             if not _knowledge_node_matches_query(knowledge_node, normalized_query):
                 continue
             if len(records) >= max_records:
@@ -671,8 +674,7 @@ def build_context_graph_projection(
         if not projection.add_node(memory_node):
             continue
 
-        for knowledge_node in _knowledge_nodes_from_memory(artifact):
-            source_event_ids = knowledge_node.pop("source_event_ids")
+        for knowledge_node, source_event_ids in _knowledge_nodes_from_memory(artifact):
             knowledge_id = knowledge_node["id"]
             if not projection.add_node(knowledge_node):
                 continue
@@ -711,7 +713,9 @@ def build_context_graph_projection(
                     target=memory_id,
                 )
 
-        for index, raw_file in enumerate((artifact.changed_files or [])[:MAX_MEMORY_FILE_REFERENCES]):
+        for index, raw_file in enumerate(
+            (artifact.changed_files or [])[:MAX_MEMORY_FILE_REFERENCES]
+        ):
             if isinstance(raw_file, str):
                 path = raw_file
                 changed_file: dict[str, Any] = {"path": raw_file}
@@ -791,11 +795,10 @@ def build_knowledge_space_projection(
 
     prompt_events_by_id = {event.id: event for event in prompt_events}
     response_events_by_id = {
-        event.id: (event, payload)
-        for event, payload in response_pairs.values()
+        event.id: (event, payload) for event, payload in response_pairs.values()
     }
     evidence_node_ids: dict[UUID, str] = {}
-    for event_id in referenced_event_ids:
+    for event_id in sorted(referenced_event_ids, key=str):
         prompt = prompt_events_by_id.get(event_id)
         if prompt is None:
             response_pair = response_events_by_id.get(event_id)
@@ -803,15 +806,11 @@ def build_knowledge_space_projection(
                 continue
             response_event, response_payload = response_pair
             response_id = f"response:{response_event.id}"
-            if projection.add_node(
-                _response_node(response_event, response_payload)
-            ):
+            if projection.add_node(_response_node(response_event, response_payload)):
                 evidence_node_ids[response_event.id] = response_id
             continue
         prompt_id = f"prompt:{prompt.id}"
-        if projection.add_node(
-            _prompt_node(prompt, prompt_payloads.get(prompt.id, {}))
-        ):
+        if projection.add_node(_prompt_node(prompt, prompt_payloads.get(prompt.id, {}))):
             evidence_node_ids[prompt.id] = prompt_id
         response_pair = response_pairs.get(str(prompt.id))
         if response_pair is None:
@@ -1014,8 +1013,7 @@ def _load_knowledge_evidence_events(
         )
     )
     return events, {
-        event.id: decrypt_event_payload(event.event_type, event.payload)
-        for event in events
+        event.id: decrypt_event_payload(event.event_type, event.payload) for event in events
     }
 
 
@@ -1239,9 +1237,7 @@ def read_project_context_graph(
             ids=referenced_event_ids,
         )
         prompt_events = [
-            event
-            for event in evidence_events
-            if event.event_type == "PromptSubmitted"
+            event for event in evidence_events if event.event_type == "PromptSubmitted"
         ]
         response_pairs, responses_truncated = _response_pairs_for_knowledge_prompts(
             db,
@@ -1255,10 +1251,7 @@ def read_project_context_graph(
                     f"direct:{event.id}",
                     (event, decrypted_payloads[event.id]),
                 )
-        prompt_payloads = {
-            event.id: decrypted_payloads[event.id]
-            for event in prompt_events
-        }
+        prompt_payloads = {event.id: decrypted_payloads[event.id] for event in prompt_events}
         return build_knowledge_space_projection(
             knowledge_records=knowledge_records,
             limit=limit,
@@ -1267,11 +1260,7 @@ def read_project_context_graph(
             prompt_payloads=prompt_payloads,
             query=normalized_query,
             response_pairs=response_pairs,
-            truncated=(
-                memories_truncated
-                or knowledge_truncated
-                or responses_truncated
-            ),
+            truncated=(memories_truncated or knowledge_truncated or responses_truncated),
         )
 
     prompt_events, prompts_truncated = _select_prompt_events(
@@ -1296,9 +1285,7 @@ def read_project_context_graph(
     prompt_ids = {event.id for event in prompt_events}
     prompt_ids.update(_prompt_ids_from_memories(memories))
     prompt_ids.update(
-        patch.prompt_event_id
-        for patch in matching_patches
-        if patch.prompt_event_id is not None
+        patch.prompt_event_id for patch in matching_patches if patch.prompt_event_id is not None
     )
     if len(prompt_ids) > MAX_GRAPH_PROMPTS:
         prompt_ids = set(sorted(prompt_ids, key=str)[:MAX_GRAPH_PROMPTS])
@@ -1373,7 +1360,9 @@ def read_project_context_graph(
     )
 
 
-def _approved_memory_candidates(artifact: Artifact, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+def _approved_memory_candidates(
+    artifact: Artifact, snapshot: dict[str, Any]
+) -> list[dict[str, Any]]:
     occurred_at = _iso(artifact.updated_at or artifact.created_at)
     root_id = f"memory:{artifact.id}"
     body = snapshot.get("body_markdown") if isinstance(snapshot.get("body_markdown"), str) else None
@@ -1544,9 +1533,7 @@ def _approved_memory_candidates(artifact: Artifact, snapshot: dict[str, Any]) ->
             subtype="superseding_decision",
             summary=reason if isinstance(reason, str) else None,
         )
-        candidates[-1]["relations"].append(
-            ("supersedes", replacement_id, previous_id)
-        )
+        candidates[-1]["relations"].append(("supersedes", replacement_id, previous_id))
 
     for index, raw_file in enumerate((artifact.changed_files or [])[:MAX_MEMORY_FILE_REFERENCES]):
         if isinstance(raw_file, str):
@@ -1638,11 +1625,7 @@ def build_approved_project_memory_graph(
             )
         ]
         candidates = matched_candidates
-        if (
-            matched_candidates
-            and root_candidate not in matched_candidates
-            and limit > 1
-        ):
+        if matched_candidates and root_candidate not in matched_candidates and limit > 1:
             candidates = [root_candidate, *matched_candidates]
 
     projection = _GraphProjection(

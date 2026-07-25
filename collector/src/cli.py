@@ -19,7 +19,7 @@ import webbrowser
 from environment import migrate_legacy_data_root
 
 from adapters import normalize_collector_event, should_ignore_collector_event
-from change_tracking import ChangeBaselineStore, detect_changes
+from change_tracking import ChangeBaselineStore, derive_prompt_lineage, detect_changes
 from config import (
     DEFAULT_UPLOADER_LOG_PATH,
     DEFAULT_UPLOADER_PID_PATH,
@@ -440,25 +440,23 @@ def capture(args: argparse.Namespace) -> int:
     )
     baseline_store = ChangeBaselineStore(args.change_baseline_path)
     previous_baseline = None
+    prompt_lineage: tuple[str | None, str | None] | None = None
     if event.event_type == "PromptSubmitted":
         previous_baseline = baseline_store.find_latest(
             tool=normalized_tool,
             external_session_id=external_session_id,
             cwd=get_first_string(payload, WORKSPACE_KEYS) or os.getcwd(),
         )
+        prompt_lineage = derive_prompt_lineage(event.id, previous_baseline)
         if isinstance(event.payload, PromptSubmittedPayload):
             event.payload.submission_context = (
                 "during_output" if previous_baseline is not None else "idle"
             )
             event.payload.delivery_mode = "unknown"
-            if previous_baseline is not None:
-                event.payload.continuation_of = str(previous_baseline["prompt_event_id"])
-                event.payload.root_prompt_event_id = str(
-                    previous_baseline.get("root_prompt_event_id")
-                    or previous_baseline["prompt_event_id"]
-                )
-            else:
-                event.payload.root_prompt_event_id = event.id
+            (
+                event.payload.continuation_of,
+                event.payload.root_prompt_event_id,
+            ) = prompt_lineage
     SequenceStore(args.sequence_path).assign(event)
     _push_captured_event(args, event)
     _remember_session(
@@ -476,6 +474,7 @@ def capture(args: argparse.Namespace) -> int:
             external_session_id=external_session_id,
             cwd=get_first_string(payload, WORKSPACE_KEYS) or os.getcwd(),
             previous_baseline=previous_baseline,
+            lineage=prompt_lineage,
         )
     return 0
 
@@ -1117,9 +1116,7 @@ def start_uploader(args: argparse.Namespace) -> int:
     pid_path = Path(args.pid_path).expanduser() if args.pid_path else DEFAULT_UPLOADER_PID_PATH
     log_path = Path(args.log_path).expanduser() if args.log_path else DEFAULT_UPLOADER_LOG_PATH
     config_path = (
-        str(Path(args.config_path).expanduser())
-        if getattr(args, "config_path", None)
-        else None
+        str(Path(args.config_path).expanduser()) if getattr(args, "config_path", None) else None
     )
     restart = bool(getattr(args, "restart", False))
     with locked_file(pid_path.with_name(f"{pid_path.name}.start.lock")):
@@ -1461,14 +1458,8 @@ def _init_single_profile(args: argparse.Namespace) -> int:
 
     print("Promty init complete")
     profile_option = f" --profile {args.profile}" if args.profile else ""
-    print(
-        "Verify setup: "
-        f"npx promty-collector@latest doctor --tool {args.tool}{profile_option}"
-    )
-    print(
-        "After Project Memory is reviewed: "
-        f"npx promty-collector@latest context{profile_option}"
-    )
+    print(f"Verify setup: npx promty-collector@latest doctor --tool {args.tool}{profile_option}")
+    print(f"After Project Memory is reviewed: npx promty-collector@latest context{profile_option}")
     return 0
 
 

@@ -385,12 +385,14 @@
 
 .context-graph-plane[data-layer="pending"] {
   --context-layer-color: var(--bh-color-info);
+
   top: 28px;
   height: 154px;
 }
 
 .context-graph-plane[data-layer="confirmed"] {
   --context-layer-color: var(--bh-color-success);
+
   left: 4%;
   top: 214px;
   width: 92%;
@@ -403,6 +405,7 @@
 
 .context-graph-plane[data-layer="archived"] {
   --context-layer-color: var(--bh-color-text-muted);
+
   top: 502px;
   height: 112px;
   opacity: 0.58;

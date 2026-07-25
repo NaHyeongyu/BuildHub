@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import change_tracking
-from change_tracking import ChangeBaselineStore
+from change_tracking import ChangeBaselineStore, derive_prompt_lineage
 from events import BaseEvent, PromptSubmittedPayload
 
 
@@ -17,6 +17,15 @@ def prompt_event(event_id: str, sequence: int) -> BaseEvent:
         session_id="session-id",
         sequence=sequence,
     )
+
+
+def test_prompt_lineage_handles_missing_legacy_identifiers() -> None:
+    assert derive_prompt_lineage("prompt-1", None) == (None, "prompt-1")
+    assert derive_prompt_lineage("prompt-2", {}) == (None, None)
+    assert derive_prompt_lineage(
+        "prompt-3",
+        {"prompt_event_id": "prompt-2"},
+    ) == ("prompt-2", "prompt-2")
 
 
 def test_continuation_inherits_root_snapshot_and_consumes_ancestors(
@@ -76,18 +85,24 @@ def test_continuation_inherits_root_snapshot_and_consumes_ancestors(
     )
     assert first_for_stop is not None
     store.mark_consumed_with_ancestors(str(first_for_stop["id"]))
-    assert store.find_latest(
-        tool="codex-cli",
-        external_session_id="external-session",
-        cwd=str(tmp_path),
-    )["id"] == "prompt-2"
+    assert (
+        store.find_latest(
+            tool="codex-cli",
+            external_session_id="external-session",
+            cwd=str(tmp_path),
+        )["id"]
+        == "prompt-2"
+    )
 
     store.mark_consumed_with_ancestors(str(second_baseline["id"]))
-    assert store.find_latest(
-        tool="codex-cli",
-        external_session_id="external-session",
-        cwd=str(tmp_path),
-    ) is None
+    assert (
+        store.find_latest(
+            tool="codex-cli",
+            external_session_id="external-session",
+            cwd=str(tmp_path),
+        )
+        is None
+    )
 
 
 def test_pending_prompt_does_not_continue_across_external_sessions(
@@ -105,8 +120,11 @@ def test_pending_prompt_does_not_continue_across_external_sessions(
         cwd=str(tmp_path),
     )
 
-    assert store.find_latest(
-        tool="codex-cli",
-        external_session_id="session-b",
-        cwd=str(tmp_path),
-    ) is None
+    assert (
+        store.find_latest(
+            tool="codex-cli",
+            external_session_id="session-b",
+            cwd=str(tmp_path),
+        )
+        is None
+    )

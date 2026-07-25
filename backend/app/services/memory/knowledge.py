@@ -20,14 +20,18 @@ def _normalized_identity(value: str) -> str:
 
 
 def _clean_source_ids(value: Any, fallback: list[str]) -> list[str]:
-    values = value if isinstance(value, list) else fallback
-    return list(
-        dict.fromkeys(
-            item.strip()
-            for item in values
-            if isinstance(item, str) and item.strip() and len(item.strip()) <= 200
-        )
-    )[:MAX_KNOWLEDGE_SOURCE_IDS]
+    def clean(values: Any) -> list[str]:
+        if not isinstance(values, list):
+            return []
+        return list(
+            dict.fromkeys(
+                item.strip()
+                for item in values
+                if isinstance(item, str) and item.strip() and len(item.strip()) <= 200
+            )
+        )[:MAX_KNOWLEDGE_SOURCE_IDS]
+
+    return clean(value) or clean(fallback)
 
 
 def _candidate_id(

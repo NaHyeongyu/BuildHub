@@ -641,7 +641,6 @@
   font-weight: var(--bh-font-weight-label);
 }
 
-.bh-prompt-work-row[data-status="interrupted"] .bh-prompt-work-status,
 .bh-prompt-work-timeline
   li[data-status="interrupted"]
   .bh-prompt-work-step-header

@@ -74,7 +74,7 @@ jobs:
         if: ${{ env.CLOUDFRONT_DISTRIBUTION_ID != '' }}
         env:
           AWS_PROFILE_NAME: ""
-          PROMTY_UPDATE_DISTRIBUTION: "false"
+          PROMTY_UPDATE_DISTRIBUTION: "true"
         run: bash infra/aws/configure-promty-cloudfront.sh
 
       - name: Invalidate CloudFront

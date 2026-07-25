@@ -70,6 +70,8 @@ describe("static search metadata", () => {
     expect(generatorSource).toContain("noindex, nofollow, noarchive");
     expect(routeSeoSource).toContain("export function useRouteSeo");
     expect(routeSeoSource).toContain("page.canonicalPath ?? page.path");
+    expect(routeSeoSource).toContain('meta[property="og:image"]');
+    expect(routeSeoSource).toContain('meta[name="twitter:image"]');
   });
 
   it("describes the installed site without claiming offline support", () => {

@@ -775,7 +775,6 @@ function ContextNodeInspector({
           {t(definition.labelKey)} · {t(`contextGraph.${layer}`)}
         </span>
         <h3>{node.label}</h3>
-        {node.summary ? <p>{node.summary}</p> : null}
         <div className="context-graph-inspector-badges">
           <span data-state={layer}>{t(`contextGraph.${layer}`)}</span>
           <span data-agent={node.agent_visible || undefined}>

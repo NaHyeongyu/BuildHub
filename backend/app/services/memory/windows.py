@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import Integer, and_, cast, desc, func, or_, select
 from sqlalchemy.orm import Session as DBSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.config import settings
 from app.models.artifacts import Artifact
@@ -31,6 +32,25 @@ def memory_slice_prompt_target() -> int:
     # ceiling. Keep one row available for the look-ahead prompt that closes a
     # prompt-count group.
     return min(max(settings.memory_slice_prompt_count, 1), memory_slice_event_max_rows() - 1)
+
+
+def response_has_content_condition() -> ColumnElement[bool]:
+    response_original_length = cast(
+        Event.payload["response_original_length"].astext,
+        Integer,
+    )
+    response_text = Event.payload["response"].astext
+    return and_(
+        Event.event_type == "ResponseReceived",
+        or_(
+            response_original_length > 0,
+            and_(
+                Event.payload["response_original_length"].astext.is_(None),
+                response_text.is_not(None),
+                func.length(response_text) > 0,
+            ),
+        ),
+    )
 
 
 def slice_metadata(artifact: Artifact) -> dict[str, Any]:
@@ -330,25 +350,12 @@ def _window_generation_input_kind(
     latest_prompt_sequence: int,
     through_sequence: int,
 ) -> str | None:
-    response_original_length = cast(
-        Event.payload["response_original_length"].astext,
-        Integer,
-    )
-    response_text = Event.payload["response"].astext
     response_query = select(Event.id).where(
         Event.project_id == session.project_id,
         Event.session_id == session.id,
-        Event.event_type == "ResponseReceived",
         Event.sequence > latest_prompt_sequence,
         Event.sequence <= through_sequence,
-        or_(
-            response_original_length > 0,
-            and_(
-                Event.payload["response_original_length"].astext.is_(None),
-                response_text.is_not(None),
-                func.length(response_text) > 0,
-            ),
-        ),
+        response_has_content_condition(),
     )
     files_query = select(Event.id).where(
         Event.project_id == session.project_id,
@@ -362,11 +369,7 @@ def _window_generation_input_kind(
     ).one()
     if not has_response:
         return None
-    return (
-        MEMORY_SLICE_KIND_IMPLEMENTATION
-        if has_files
-        else MEMORY_SLICE_KIND_REASONING
-    )
+    return MEMORY_SLICE_KIND_IMPLEMENTATION if has_files else MEMORY_SLICE_KIND_REASONING
 
 
 def _prompt_events_after_sequence(

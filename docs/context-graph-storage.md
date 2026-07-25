@@ -46,9 +46,10 @@ Every inferred edge must retain its evidence and confidence. User acceptance or 
 an explicit state change; it must never overwrite a recorded edge.
 
 The current read projection stores each node's `confirmed` or `rejected`
-review state inside the versioned generated-memory projection. This keeps
-review transactional with the authoritative memory until separate materialized
-graph tables are justified.
+review state in the locked generated-memory artifact's `metadata_`. The review
+update is transactional with the authoritative memory and intentionally does
+not create an `ArtifactVersion`; separate materialized graph tables can be
+introduced later if their operational value justifies them.
 
 ### Embeddings and projection queue
 

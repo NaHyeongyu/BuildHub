@@ -66,6 +66,22 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def derive_prompt_lineage(
+    event_id: str,
+    previous_baseline: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    if previous_baseline is None:
+        return None, event_id
+
+    previous_prompt_event_id = previous_baseline.get("prompt_event_id")
+    continuation_of = (
+        str(previous_prompt_event_id) if previous_prompt_event_id is not None else None
+    )
+    root_value = previous_baseline.get("root_prompt_event_id") or continuation_of
+    root_prompt_event_id = str(root_value) if root_value is not None else None
+    return continuation_of, root_prompt_event_id
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -592,6 +608,7 @@ class ChangeBaselineStore:
         external_session_id: str | None,
         cwd: str | None,
         previous_baseline: dict[str, Any] | None = None,
+        lineage: tuple[str | None, str | None] | None = None,
     ) -> None:
         inherited_snapshot = (
             previous_baseline.get("snapshot")
@@ -601,16 +618,9 @@ class ChangeBaselineStore:
         )
         snapshot = inherited_snapshot or capture_git_snapshot(cwd)
 
-        continuation_of = (
-            str(previous_baseline["prompt_event_id"])
-            if isinstance(previous_baseline, dict)
-            and previous_baseline.get("prompt_event_id")
-            else None
-        )
-        root_prompt_event_id = (
-            str(previous_baseline.get("root_prompt_event_id") or continuation_of)
-            if previous_baseline is not None
-            else event.id
+        continuation_of, root_prompt_event_id = lineage or derive_prompt_lineage(
+            event.id,
+            previous_baseline,
         )
         record = {
             "id": event.id,
@@ -633,13 +643,14 @@ class ChangeBaselineStore:
             self._prune(data)
             self._write(data)
 
-    def find_latest(
+    def _select_candidates(
         self,
         *,
         tool: str,
         external_session_id: str | None,
         cwd: str | None,
-    ) -> dict[str, Any] | None:
+        turn_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         git_root = resolve_git_root(cwd) if cwd else None
         with self._locked():
             records = list((self._read().get("records") or {}).values())
@@ -650,6 +661,8 @@ class ChangeBaselineStore:
                 continue
             if record.get("tool") != tool:
                 continue
+            if turn_id is not None and str(record.get("turn_id")) != turn_id:
+                continue
             if external_session_id:
                 if record.get("external_session_id") == external_session_id:
                     candidates.append(record)
@@ -659,6 +672,20 @@ class ChangeBaselineStore:
                 candidates.append(record)
 
         candidates.sort(key=lambda record: str(record.get("created_at") or ""))
+        return candidates
+
+    def find_latest(
+        self,
+        *,
+        tool: str,
+        external_session_id: str | None,
+        cwd: str | None,
+    ) -> dict[str, Any] | None:
+        candidates = self._select_candidates(
+            tool=tool,
+            external_session_id=external_session_id,
+            cwd=cwd,
+        )
         return candidates[-1] if candidates else None
 
     def find_for_turn(
@@ -676,33 +703,20 @@ class ChangeBaselineStore:
                 cwd=cwd,
             )
 
-        expected_turn_id = str(turn_id)
-        git_root = resolve_git_root(cwd) if cwd else None
-        with self._locked():
-            records = list((self._read().get("records") or {}).values())
-
-        candidates: list[dict[str, Any]] = []
-        for record in records:
-            if not isinstance(record, dict) or record.get("consumed_at"):
-                continue
-            if (
-                record.get("tool") != tool
-                or str(record.get("turn_id")) != expected_turn_id
-            ):
-                continue
-            if external_session_id:
-                if record.get("external_session_id") == external_session_id:
-                    candidates.append(record)
-                continue
-            record_git_root = (record.get("snapshot") or {}).get("git_root")
-            if git_root and record_git_root == git_root:
-                candidates.append(record)
-
-        candidates.sort(key=lambda record: str(record.get("created_at") or ""))
-        return candidates[-1] if candidates else self.find_latest(
+        candidates = self._select_candidates(
             tool=tool,
             external_session_id=external_session_id,
             cwd=cwd,
+            turn_id=str(turn_id),
+        )
+        return (
+            candidates[-1]
+            if candidates
+            else self.find_latest(
+                tool=tool,
+                external_session_id=external_session_id,
+                cwd=cwd,
+            )
         )
 
     def mark_consumed(self, record_id: str) -> None:
