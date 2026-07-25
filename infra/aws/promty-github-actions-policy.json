@@ -50,6 +50,7 @@
       "Action": [
         "cloudfront:CreateFunction",
         "cloudfront:DescribeFunction",
+        "cloudfront:GetDistribution",
         "cloudfront:GetDistributionConfig",
         "cloudfront:PublishFunction",
         "cloudfront:UpdateDistribution",
