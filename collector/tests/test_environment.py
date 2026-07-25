@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import environment
 
@@ -86,3 +88,29 @@ def test_migrate_legacy_data_root_skips_queue_for_configured_profile(
         encoding="utf-8",
     ) == "current"
     assert not (canonical_profile / "events").exists()
+
+
+def test_migrate_legacy_data_root_rechecks_marker_after_lock(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    legacy_root = tmp_path / ".prompthub"
+    promty_root = tmp_path / ".promty"
+    legacy_root.mkdir()
+    marker = promty_root / environment.LEGACY_MIGRATION_MARKER
+    monkeypatch.setattr(environment, "LEGACY_DATA_ROOT", legacy_root)
+    monkeypatch.setenv("PROMTY_HOME", str(promty_root))
+
+    @contextmanager
+    def complete_migration_while_waiting(_path: Path) -> Iterator[None]:
+        marker.parent.mkdir(parents=True)
+        marker.touch()
+        yield
+
+    def fail_if_copy_runs(_source: Path, _destination: Path) -> None:
+        raise AssertionError("migration copy ran after another process completed it")
+
+    monkeypatch.setattr(environment, "locked_file", complete_migration_while_waiting)
+    monkeypatch.setattr(environment, "_copy_missing_tree", fail_if_copy_runs)
+
+    environment.migrate_legacy_data_root()
