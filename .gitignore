@@ -15,3 +15,6 @@ build/
 # Generated analytics report bundles (keep source notes and SQL only)
 reports/*/report.html
 reports/*/artifact.json
+
+# Generated machine-specific Codex hooks
+.codex/hooks.json
