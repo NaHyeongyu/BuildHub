@@ -1,6 +1,6 @@
 {
   "name": "promty-collector",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Capture AI coding work and build reviewable project memory with Promty",
   "license": "UNLICENSED",
   "homepage": "https://promty.org",
