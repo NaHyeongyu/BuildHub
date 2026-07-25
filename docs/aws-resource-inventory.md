@@ -300,6 +300,7 @@ The deploy role can:
 
 - push backend images to ECR
 - sync frontend files to the frontend S3 bucket
+- publish and associate the route-aware CloudFront function
 - create CloudFront invalidations
 - send SSM commands to EC2 instance `i-066ab5e01b9685b6a`
 
