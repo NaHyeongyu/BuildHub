@@ -3,28 +3,36 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ComponentType,
+  type CSSProperties,
   type RefObject,
 } from "react";
 import {
-  Bot,
+  Archive,
+  Check,
+  CircleHelp,
   ExternalLink,
-  FileCode2,
-  MessageSquareText,
+  GitBranch,
+  Lightbulb,
+  ListChecks,
   Network,
   RefreshCw,
   Search,
   ShieldCheck,
   Sparkles,
-  X,
+  ThumbsDown,
+  ThumbsUp,
   type LucideProps,
 } from "lucide-react";
 import {
   fetchProjectContextGraph,
+  reviewProjectContextGraphNode,
   type ProjectContextGraphEdge,
+  type ProjectContextGraphEdgeKind,
   type ProjectContextGraphNode,
   type ProjectContextGraphNodeKind,
+  type ProjectContextGraphNodeReviewAction,
+  type ProjectContextGraphNodeReviewResponse,
   type ProjectContextGraphResponse,
 } from "../../api/projects";
 import {
@@ -34,95 +42,162 @@ import {
 import "./context-graph.css";
 
 const CONTEXT_GRAPH_LIMIT = 40;
-const CONTEXT_GRAPH_ROW_HEIGHT = 84;
-const CONTEXT_GRAPH_ROW_GAP = 40;
-const CONTEXT_GRAPH_HEADER_HEIGHT = 76;
-const CONTEXT_GRAPH_NODE_CENTER_Y =
-  CONTEXT_GRAPH_HEADER_HEIGHT + CONTEXT_GRAPH_ROW_HEIGHT / 2;
-const CONTEXT_GRAPH_ROW_STEP =
-  CONTEXT_GRAPH_ROW_HEIGHT + CONTEXT_GRAPH_ROW_GAP;
-const CONTEXT_GRAPH_CANVAS_WIDTH = 960;
-const CONTEXT_GRAPH_LANE_CENTERS = [120, 360, 600, 840] as const;
-const CONTEXT_GRAPH_NODE_HALF_WIDTH = 96;
-
-type LaneDefinition = {
-  descriptionKey: TranslationKey;
-  icon: ComponentType<LucideProps>;
-  kind: ProjectContextGraphNodeKind;
-  labelKey: TranslationKey;
+const KNOWLEDGE_CANVAS_WIDTH = 920;
+const KNOWLEDGE_CANVAS_HEIGHT = 640;
+const MAX_VISIBLE_KNOWLEDGE_NODES = 20;
+const KNOWLEDGE_LAYER_CAPACITY: Record<KnowledgeLayer, number> = {
+  pending: 6,
+  confirmed: 10,
+  archived: 4,
 };
 
-const LANE_DEFINITIONS: LaneDefinition[] = [
-  {
-    descriptionKey: "contextGraph.promptDescription",
-    icon: MessageSquareText,
-    kind: "prompt",
-    labelKey: "contextGraph.prompt",
+const KNOWLEDGE_NODE_KINDS = [
+  "decision",
+  "requirement",
+  "brainstorm",
+  "open_question",
+] as const satisfies readonly ProjectContextGraphNodeKind[];
+
+type KnowledgeNodeKind = (typeof KNOWLEDGE_NODE_KINDS)[number];
+export type KnowledgeLayer = "pending" | "confirmed" | "archived";
+type KnowledgeLayerFilter = "all" | KnowledgeLayer;
+type KnowledgeVisualEdgeKind =
+  | ProjectContextGraphEdgeKind
+  | "shared_evidence"
+  | "shared_memory";
+
+type NodeDefinition = {
+  icon: ComponentType<LucideProps>;
+  labelKey: TranslationKey;
+  mark: string;
+};
+
+type LayerDefinition = {
+  descriptionKey: TranslationKey;
+  icon: ComponentType<LucideProps>;
+  labelKey: TranslationKey;
+  layer: KnowledgeLayer;
+};
+
+const NODE_DEFINITIONS: Record<KnowledgeNodeKind, NodeDefinition> = {
+  decision: {
+    icon: GitBranch,
+    labelKey: "contextGraph.decision",
+    mark: "D",
   },
-  {
-    descriptionKey: "contextGraph.responseDescription",
-    icon: Bot,
-    kind: "response",
-    labelKey: "contextGraph.response",
+  requirement: {
+    icon: ListChecks,
+    labelKey: "contextGraph.requirement",
+    mark: "R",
   },
-  {
-    descriptionKey: "contextGraph.fileDescription",
-    icon: FileCode2,
-    kind: "file",
-    labelKey: "contextGraph.file",
+  brainstorm: {
+    icon: Lightbulb,
+    labelKey: "contextGraph.brainstorm",
+    mark: "I",
   },
+  open_question: {
+    icon: CircleHelp,
+    labelKey: "contextGraph.openQuestion",
+    mark: "?",
+  },
+};
+
+const LAYER_DEFINITIONS: LayerDefinition[] = [
   {
-    descriptionKey: "contextGraph.memoryDescription",
+    descriptionKey: "contextGraph.reviewRequired",
     icon: Sparkles,
-    kind: "memory",
-    labelKey: "contextGraph.memory",
+    labelKey: "contextGraph.pending",
+    layer: "pending",
+  },
+  {
+    descriptionKey: "contextGraph.ownerReviewed",
+    icon: Check,
+    labelKey: "contextGraph.confirmed",
+    layer: "confirmed",
+  },
+  {
+    descriptionKey: "contextGraph.traceable",
+    icon: Archive,
+    labelKey: "contextGraph.archived",
+    layer: "archived",
   },
 ];
 
-const ALL_NODE_KINDS = LANE_DEFINITIONS.map((lane) => lane.kind);
 const SAFE_METADATA_KEYS = new Set([
-  "additions",
-  "artifact_stage",
+  "artifact_review_state",
   "confidence",
-  "deletions",
-  "language",
-  "memory_scope",
-  "model",
+  "evidence_type",
   "review_state",
+  "reviewed_at",
+  "source_event_count",
   "status",
-  "tags",
-  "technologies",
-  "tool",
+  "subtype",
 ]);
-const SENSITIVE_METADATA_KEY_PATTERN = /content|diff|patch|prompt|response|secret/i;
+const SENSITIVE_METADATA_KEY_PATTERN =
+  /content|diff|patch|prompt|response|secret|source_event|source_chunk/i;
 
-type ContextGraphNodePosition = {
-  laneIndex: number;
-  rowIndex: number;
+type KnowledgeNodePosition = {
+  layer: KnowledgeLayer;
   x: number;
   y: number;
 };
 
-export type ContextGraphLayoutEdge = ProjectContextGraphEdge & {
+export type KnowledgeGraphLayoutEdge = {
+  id: string;
+  inferred: boolean;
+  kind: KnowledgeVisualEdgeKind;
   path: string;
+  source: string;
+  target: string;
 };
 
 export type ContextGraphLayout = {
   canvasHeight: number;
-  edges: ContextGraphLayoutEdge[];
-  lanes: Array<{
-    kind: ProjectContextGraphNodeKind;
+  edges: KnowledgeGraphLayoutEdge[];
+  hiddenNodeCount: number;
+  layers: Array<{
+    layer: KnowledgeLayer;
     nodes: ProjectContextGraphNode[];
   }>;
-  nodePositions: Record<string, ContextGraphNodePosition>;
+  nodePositions: Record<string, KnowledgeNodePosition>;
   visibleNodes: ProjectContextGraphNode[];
 };
 
-type ContextGraphConnection = {
+type KnowledgeConnection = {
   direction: "incoming" | "outgoing";
-  edge: ProjectContextGraphEdge;
+  edge: KnowledgeGraphLayoutEdge;
   node: ProjectContextGraphNode;
 };
+
+function isKnowledgeNode(
+  node: ProjectContextGraphNode,
+): node is ProjectContextGraphNode & { kind: KnowledgeNodeKind } {
+  return (KNOWLEDGE_NODE_KINDS as readonly string[]).includes(node.kind);
+}
+
+export function knowledgeNodeLayer(
+  node: ProjectContextGraphNode,
+): KnowledgeLayer {
+  const status =
+    typeof node.metadata.status === "string" ? node.metadata.status : null;
+  const reviewState =
+    typeof node.metadata.review_state === "string"
+      ? node.metadata.review_state
+      : null;
+
+  if (
+    reviewState === "rejected" ||
+    status === "discarded" ||
+    status === "superseded" ||
+    status === "archived"
+  ) {
+    return "archived";
+  }
+  if (reviewState === "confirmed") {
+    return "confirmed";
+  }
+  return "pending";
+}
 
 function contextGraphNodeTimestamp(node: ProjectContextGraphNode) {
   if (!node.occurred_at) {
@@ -132,104 +207,225 @@ function contextGraphNodeTimestamp(node: ProjectContextGraphNode) {
   return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
 }
 
-function compareContextGraphNodes(
+function compareKnowledgeNodes(
   left: ProjectContextGraphNode,
   right: ProjectContextGraphNode,
 ) {
   const leftTimestamp = contextGraphNodeTimestamp(left);
   const rightTimestamp = contextGraphNodeTimestamp(right);
   if (leftTimestamp !== rightTimestamp) {
-    return leftTimestamp - rightTimestamp;
+    return rightTimestamp - leftTimestamp;
   }
-
-  const sequenceDifference =
-    (left.sequence ?? Number.MAX_SAFE_INTEGER) -
-    (right.sequence ?? Number.MAX_SAFE_INTEGER);
-  if (sequenceDifference !== 0) {
-    return sequenceDifference;
+  const kindDifference =
+    KNOWLEDGE_NODE_KINDS.indexOf(left.kind as KnowledgeNodeKind) -
+    KNOWLEDGE_NODE_KINDS.indexOf(right.kind as KnowledgeNodeKind);
+  if (kindDifference !== 0) {
+    return kindDifference;
   }
-
-  return left.id.localeCompare(right.id);
+  return left.label.localeCompare(right.label);
 }
 
-function contextGraphEdgePath(
-  source: ContextGraphNodePosition,
-  target: ContextGraphNodePosition,
+function matchesKnowledgeQuery(
+  node: ProjectContextGraphNode,
+  normalizedQuery: string,
 ) {
-  if (source.laneIndex === target.laneIndex) {
-    const side = source.laneIndex < 2 ? 1 : -1;
-    const sourceX = source.x + side * CONTEXT_GRAPH_NODE_HALF_WIDTH;
-    const targetX = target.x + side * CONTEXT_GRAPH_NODE_HALF_WIDTH;
-    const curveX = sourceX + side * 42;
-    return [
-      `M ${sourceX} ${source.y}`,
-      `C ${curveX} ${source.y}, ${curveX} ${target.y}, ${targetX} ${target.y}`,
-    ].join(" ");
+  if (!normalizedQuery) {
+    return true;
+  }
+  const searchable = [
+    node.label,
+    node.summary,
+    node.metadata.subtype,
+    node.metadata.status,
+    node.metadata.review_state,
+  ]
+    .filter((value) => typeof value === "string")
+    .join(" ")
+    .toLocaleLowerCase();
+  return normalizedQuery
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((term) => searchable.includes(term));
+}
+
+function layerNodePosition(
+  layer: KnowledgeLayer,
+  index: number,
+  count: number,
+): KnowledgeNodePosition {
+  if (layer === "pending") {
+    const x = 235 + ((index + 0.5) / Math.max(count, 1)) * 510;
+    return { layer, x, y: 122 + (index % 2) * 16 };
   }
 
-  const direction = target.x > source.x ? 1 : -1;
-  const sourceX = source.x + direction * CONTEXT_GRAPH_NODE_HALF_WIDTH;
-  const targetX = target.x - direction * CONTEXT_GRAPH_NODE_HALF_WIDTH;
-  const midpointX = sourceX + (targetX - sourceX) / 2;
+  if (layer === "archived") {
+    const x = 260 + ((index + 0.5) / Math.max(count, 1)) * 420;
+    return { layer, x, y: 564 + (index % 2) * 10 };
+  }
+
+  const rowCount = count > 5 ? 2 : 1;
+  const row = rowCount === 1 ? 0 : index % 2;
+  const column = rowCount === 1 ? index : Math.floor(index / 2);
+  const columns = Math.ceil(count / rowCount);
+  const x = 170 + ((column + 0.5) / Math.max(columns, 1)) * 610;
+  return { layer, x, y: rowCount === 1 ? 350 : 310 + row * 118 };
+}
+
+function knowledgeEdgePath(
+  source: KnowledgeNodePosition,
+  target: KnowledgeNodePosition,
+) {
+  const verticalDistance = Math.abs(target.y - source.y);
+  const curve = Math.max(24, Math.min(82, verticalDistance * 0.42));
+  const direction = target.y >= source.y ? 1 : -1;
   return [
-    `M ${sourceX} ${source.y}`,
-    `C ${midpointX} ${source.y}, ${midpointX} ${target.y}, ${targetX} ${target.y}`,
+    `M ${source.x} ${source.y}`,
+    `C ${source.x} ${source.y + curve * direction},`,
+    `${target.x} ${target.y - curve * direction},`,
+    `${target.x} ${target.y}`,
   ].join(" ");
 }
 
+function pairKey(source: string, target: string) {
+  return [source, target].sort().join("\u001f");
+}
+
+/**
+ * Produces a bounded, knowledge-only visual projection.
+ * Raw prompts, responses, files, and memory records remain available as detail
+ * evidence but never become nodes on the map.
+ */
 export function buildContextGraphLayout(
   nodes: ProjectContextGraphNode[],
   edges: ProjectContextGraphEdge[],
-  enabledKinds: ReadonlySet<ProjectContextGraphNodeKind> = new Set(ALL_NODE_KINDS),
+  enabledKinds: ReadonlySet<ProjectContextGraphNodeKind> = new Set(
+    KNOWLEDGE_NODE_KINDS,
+  ),
+  layerFilter: KnowledgeLayerFilter = "all",
+  query = "",
 ): ContextGraphLayout {
-  const uniqueNodes = new Map<string, ProjectContextGraphNode>();
-  for (const node of nodes) {
-    if (enabledKinds.has(node.kind) && !uniqueNodes.has(node.id)) {
-      uniqueNodes.set(node.id, node);
-    }
-  }
-
-  const lanes = LANE_DEFINITIONS.map(({ kind }) => ({
-    kind,
-    nodes: [...uniqueNodes.values()]
-      .filter((node) => node.kind === kind)
-      .sort(compareContextGraphNodes),
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const allKnowledgeNodes = nodes
+    .filter(isKnowledgeNode)
+    .filter((node) => enabledKinds.has(node.kind))
+    .filter(
+      (node) =>
+        layerFilter === "all" || knowledgeNodeLayer(node) === layerFilter,
+    )
+    .filter((node) => matchesKnowledgeQuery(node, normalizedQuery))
+    .sort(compareKnowledgeNodes);
+  const layers = LAYER_DEFINITIONS.map(({ layer }) => ({
+    layer,
+    nodes: allKnowledgeNodes
+      .filter((node) => knowledgeNodeLayer(node) === layer)
+      .slice(0, KNOWLEDGE_LAYER_CAPACITY[layer]),
   }));
-  const nodePositions: Record<string, ContextGraphNodePosition> = {};
-  for (const [laneIndex, lane] of lanes.entries()) {
-    for (const [rowIndex, node] of lane.nodes.entries()) {
-      nodePositions[node.id] = {
-        laneIndex,
-        rowIndex,
-        x: CONTEXT_GRAPH_LANE_CENTERS[laneIndex],
-        y: CONTEXT_GRAPH_NODE_CENTER_Y + rowIndex * CONTEXT_GRAPH_ROW_STEP,
-      };
+  const visibleNodes = layers
+    .flatMap((layer) => layer.nodes)
+    .slice(0, MAX_VISIBLE_KNOWLEDGE_NODES);
+  const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
+  const nodePositions: Record<string, KnowledgeNodePosition> = {};
+  for (const layer of layers) {
+    for (const [index, node] of layer.nodes.entries()) {
+      nodePositions[node.id] = layerNodePosition(
+        layer.layer,
+        index,
+        layer.nodes.length,
+      );
     }
   }
 
-  const visibleEdges = edges.flatMap((edge) => {
-    const source = nodePositions[edge.source];
-    const target = nodePositions[edge.target];
-    if (!source || !target || edge.source === edge.target) {
-      return [];
+  const visualEdges: KnowledgeGraphLayoutEdge[] = [];
+  const usedPairs = new Set<string>();
+  const appendEdge = (
+    source: string,
+    target: string,
+    kind: KnowledgeVisualEdgeKind,
+    inferred: boolean,
+    id: string,
+  ) => {
+    const sourcePosition = nodePositions[source];
+    const targetPosition = nodePositions[target];
+    const key = pairKey(source, target);
+    if (
+      !sourcePosition ||
+      !targetPosition ||
+      source === target ||
+      usedPairs.has(key)
+    ) {
+      return;
     }
-    return [{ ...edge, path: contextGraphEdgePath(source, target) }];
-  });
-  const maximumRows = Math.max(1, ...lanes.map((lane) => lane.nodes.length));
-  const canvasHeight = Math.max(
-    360,
-    CONTEXT_GRAPH_HEADER_HEIGHT +
-      maximumRows * CONTEXT_GRAPH_ROW_HEIGHT +
-      Math.max(maximumRows - 1, 0) * CONTEXT_GRAPH_ROW_GAP +
-      28,
+    usedPairs.add(key);
+    visualEdges.push({
+      id,
+      inferred,
+      kind,
+      path: knowledgeEdgePath(sourcePosition, targetPosition),
+      source,
+      target,
+    });
+  };
+
+  for (const edge of edges) {
+    if (visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)) {
+      appendEdge(
+        edge.source,
+        edge.target,
+        edge.kind,
+        edge.inferred,
+        edge.id,
+      );
+    }
+  }
+
+  const connectSharedTargets = (
+    sourceEdges: ProjectContextGraphEdge[],
+    kind: "shared_evidence" | "shared_memory",
+  ) => {
+    const sourceIdsByTarget = new Map<string, string[]>();
+    for (const edge of sourceEdges) {
+      if (!visibleNodeIds.has(edge.source)) {
+        continue;
+      }
+      const sourceIds = sourceIdsByTarget.get(edge.target) ?? [];
+      if (!sourceIds.includes(edge.source)) {
+        sourceIds.push(edge.source);
+      }
+      sourceIdsByTarget.set(edge.target, sourceIds);
+    }
+    for (const [targetId, sourceIds] of sourceIdsByTarget) {
+      const anchor = sourceIds[0];
+      for (const sourceId of sourceIds.slice(1)) {
+        appendEdge(
+          anchor,
+          sourceId,
+          kind,
+          true,
+          `${kind}:${targetId}:${anchor}:${sourceId}`,
+        );
+      }
+    }
+  };
+
+  connectSharedTargets(
+    edges.filter((edge) => edge.kind === "derived_from"),
+    "shared_evidence",
+  );
+  connectSharedTargets(
+    edges.filter((edge) => edge.kind === "captured_in"),
+    "shared_memory",
   );
 
   return {
-    canvasHeight,
-    edges: visibleEdges,
-    lanes,
+    canvasHeight: KNOWLEDGE_CANVAS_HEIGHT,
+    edges: visualEdges,
+    hiddenNodeCount: Math.max(
+      allKnowledgeNodes.length - visibleNodes.length,
+      0,
+    ),
+    layers,
     nodePositions,
-    visibleNodes: lanes.flatMap((lane) => lane.nodes),
+    visibleNodes,
   };
 }
 
@@ -240,17 +436,46 @@ function isDisplayableMetadataValue(value: unknown) {
   return (
     Array.isArray(value) &&
     value.length <= 12 &&
-    value.every((item) => ["string", "number", "boolean"].includes(typeof item))
+    value.every((item) =>
+      ["string", "number", "boolean"].includes(typeof item),
+    )
   );
 }
 
-export function visibleContextGraphMetadata(metadata: Record<string, unknown>) {
+export function visibleContextGraphMetadata(
+  metadata: Record<string, unknown>,
+) {
   return Object.entries(metadata).filter(
     ([key, value]) =>
       SAFE_METADATA_KEYS.has(key) &&
       !SENSITIVE_METADATA_KEY_PATTERN.test(key) &&
       isDisplayableMetadataValue(value),
   );
+}
+
+export function applyKnowledgeNodeReview(
+  graph: ProjectContextGraphResponse,
+  review: ProjectContextGraphNodeReviewResponse,
+): ProjectContextGraphResponse {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      node.id === review.node_id
+        ? {
+            ...node,
+            metadata: {
+              ...node.metadata,
+              evidence_type:
+                review.review_state === "confirmed"
+                  ? "confirmed"
+                  : "inferred",
+              review_state: review.review_state,
+              reviewed_at: review.reviewed_at,
+            },
+          }
+        : node,
+    ),
+  };
 }
 
 function formatMetadataValue(value: unknown) {
@@ -274,39 +499,16 @@ function formatOccurredAt(value: string | null, localeTag: string) {
   }).format(date);
 }
 
-function shortIdentifier(value: string) {
-  return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+function knowledgeNodeReviewState(node: ProjectContextGraphNode) {
+  return node.metadata.review_state === "confirmed" ||
+    node.metadata.review_state === "rejected"
+    ? node.metadata.review_state
+    : "unreviewed";
 }
 
-function useDebouncedProjectQuery(
-  projectId: string,
-  value: string,
-  delayMs: number,
-) {
-  const [debouncedState, setDebouncedState] = useState({
-    projectId,
-    value,
-  });
-
-  useEffect(() => {
-    if (debouncedState.projectId !== projectId) {
-      setDebouncedState({ projectId, value: "" });
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      setDebouncedState({ projectId, value });
-    }, delayMs);
-    return () => window.clearTimeout(timer);
-  }, [debouncedState.projectId, delayMs, projectId, value]);
-
-  return debouncedState.projectId === projectId ? debouncedState.value : "";
-}
-
-function laneDefinition(kind: ProjectContextGraphNodeKind) {
-  return LANE_DEFINITIONS.find((lane) => lane.kind === kind) ?? LANE_DEFINITIONS[0];
-}
-
-function edgeTranslationKey(edge: ProjectContextGraphEdge): TranslationKey {
+function edgeTranslationKey(
+  edge: KnowledgeGraphLayoutEdge,
+): TranslationKey {
   switch (edge.kind) {
     case "answered_by":
       return "contextGraph.relationAnsweredBy";
@@ -314,62 +516,60 @@ function edgeTranslationKey(edge: ProjectContextGraphEdge): TranslationKey {
       return "contextGraph.relationChanged";
     case "captured_in":
       return "contextGraph.relationCapturedIn";
+    case "derived_from":
+      return "contextGraph.relationDerivedFrom";
     case "references":
       return "contextGraph.relationReferences";
+    case "supersedes":
+      return "contextGraph.relationSupersedes";
+    case "shared_evidence":
+      return "contextGraph.sharedOutput";
+    case "shared_memory":
+      return "contextGraph.capturedTogether";
   }
 }
 
-function ContextNodeButton({
-  compact = false,
+function KnowledgeNodeButton({
   isMuted,
   isRelated,
   isSelected,
-  mobile = false,
   node,
   onSelect,
+  position,
 }: {
-  compact?: boolean;
   isMuted: boolean;
   isRelated: boolean;
   isSelected: boolean;
-  mobile?: boolean;
-  node: ProjectContextGraphNode;
+  node: ProjectContextGraphNode & { kind: KnowledgeNodeKind };
   onSelect: (nodeId: string) => void;
+  position: KnowledgeNodePosition;
 }) {
-  const { localeTag, t } = useI18n();
-  const definition = laneDefinition(node.kind);
-  const Icon = definition.icon;
-  const occurredAt = formatOccurredAt(node.occurred_at, localeTag);
-
+  const { t } = useI18n();
+  const definition = NODE_DEFINITIONS[node.kind];
+  const layer = knowledgeNodeLayer(node);
   return (
     <button
       aria-label={`${t(definition.labelKey)}: ${node.label}`}
       aria-pressed={isSelected}
       className="context-graph-node"
-      data-compact={compact || undefined}
       data-kind={node.kind}
-      data-mobile={mobile || undefined}
+      data-layer={layer}
       data-muted={isMuted || undefined}
       data-related={isRelated || undefined}
       data-selected={isSelected || undefined}
       onClick={() => onSelect(node.id)}
+      style={
+        {
+          "--context-node-x": `${(position.x / KNOWLEDGE_CANVAS_WIDTH) * 100}%`,
+          "--context-node-y": `${position.y}px`,
+        } as CSSProperties
+      }
       type="button"
     >
-      <span aria-hidden="true" className="context-graph-node-port context-graph-node-port-in" />
-      <span className="context-graph-node-kicker">
-        <Icon aria-hidden="true" size={14} strokeWidth={1.7} />
-        {t(definition.labelKey)}
-        {node.agent_visible ? <small>{t("contextGraph.agentReady")}</small> : null}
+      <span className="context-graph-node-orbit" aria-hidden="true">
+        <span>{definition.mark}</span>
       </span>
       <strong>{node.label}</strong>
-      {!compact && node.summary ? (
-        <span className="context-graph-node-summary">{node.summary}</span>
-      ) : null}
-      <span className="context-graph-node-meta">
-        {node.sequence !== null ? <small>#{node.sequence}</small> : null}
-        {occurredAt ? <small>{occurredAt}</small> : null}
-      </span>
-      <span aria-hidden="true" className="context-graph-node-port context-graph-node-port-out" />
     </button>
   );
 }
@@ -388,20 +588,29 @@ function ContextGraphDesktop({
   const { t } = useI18n();
   return (
     <div className="context-graph-desktop" data-testid="context-graph-desktop">
-      <div
-        className="context-graph-canvas"
-        style={
-          {
-            "--context-graph-canvas-height": `${layout.canvasHeight}px`,
-          } as CSSProperties
-        }
-      >
+      <div className="context-graph-map-caption">
+        <span>{t("contextGraph.layeredView")}</span>
+        <small>{t("contextGraph.mapHint")}</small>
+      </div>
+      <div className="context-graph-canvas">
+        {LAYER_DEFINITIONS.map((definition) => (
+          <div
+            className="context-graph-plane"
+            data-layer={definition.layer}
+            key={definition.layer}
+          >
+            <span>
+              {t(definition.labelKey)}
+              <small>{t(definition.descriptionKey)}</small>
+            </span>
+          </div>
+        ))}
         <svg
           aria-hidden="true"
           className="context-graph-edges"
           focusable="false"
           preserveAspectRatio="none"
-          viewBox={`0 0 ${CONTEXT_GRAPH_CANVAS_WIDTH} ${layout.canvasHeight}`}
+          viewBox={`0 0 ${KNOWLEDGE_CANVAS_WIDTH} ${KNOWLEDGE_CANVAS_HEIGHT}`}
         >
           {layout.edges.map((edge) => (
             <path
@@ -409,357 +618,320 @@ function ContextGraphDesktop({
               d={edge.path}
               data-active={
                 selectedNodeId !== null &&
-                (edge.source === selectedNodeId || edge.target === selectedNodeId)
+                (edge.source === selectedNodeId ||
+                  edge.target === selectedNodeId)
                   ? "true"
                   : undefined
               }
               data-inferred={edge.inferred || undefined}
+              data-kind={edge.kind}
               key={edge.id}
               vectorEffect="non-scaling-stroke"
             />
           ))}
         </svg>
-
-        <div className="context-graph-lanes">
-          {layout.lanes.map((lane) => {
-            const definition = laneDefinition(lane.kind);
-            const Icon = definition.icon;
-            return (
-              <section
-                aria-labelledby={`context-graph-lane-${lane.kind}`}
-                className="context-graph-lane"
-                data-kind={lane.kind}
-                key={lane.kind}
-              >
-                <header>
-                  <span>
-                    <Icon aria-hidden="true" size={16} strokeWidth={1.7} />
-                  </span>
-                  <div>
-                    <h3 id={`context-graph-lane-${lane.kind}`}>
-                      {t(definition.labelKey)}
-                    </h3>
-                    <p>{t(definition.descriptionKey)}</p>
-                  </div>
-                  <small>{lane.nodes.length}</small>
-                </header>
-                <ol>
-                  {lane.nodes.map((node) => (
-                    <li key={node.id}>
-                      <ContextNodeButton
-                        compact
-                        isMuted={
-                          selectedNodeId !== null && !relatedNodeIds.has(node.id)
-                        }
-                        isRelated={
-                          selectedNodeId !== null && relatedNodeIds.has(node.id)
-                        }
-                        isSelected={selectedNodeId === node.id}
-                        node={node}
-                        onSelect={onSelectNode}
-                      />
-                    </li>
-                  ))}
-                </ol>
-              </section>
-            );
-          })}
-        </div>
+        {layout.visibleNodes.filter(isKnowledgeNode).map((node) => {
+          const isSelected = node.id === selectedNodeId;
+          const isRelated = relatedNodeIds.has(node.id);
+          const isMuted =
+            selectedNodeId !== null && !isSelected && !isRelated;
+          return (
+            <KnowledgeNodeButton
+              isMuted={isMuted}
+              isRelated={isRelated}
+              isSelected={isSelected}
+              key={node.id}
+              node={node}
+              onSelect={onSelectNode}
+              position={layout.nodePositions[node.id]}
+            />
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function ContextGraphMobile({
-  connections,
-  layout,
-  selectedNodeId,
-  onSelectNode,
-}: {
-  connections: ContextGraphConnection[];
-  layout: ContextGraphLayout;
-  selectedNodeId: string | null;
-  onSelectNode: (nodeId: string) => void;
-}) {
-  const { t } = useI18n();
-  const selectedNode =
-    layout.visibleNodes.find((node) => node.id === selectedNodeId) ??
-    layout.visibleNodes[0] ??
-    null;
-
-  if (!selectedNode) {
-    return null;
+function sourceEvidenceNodes(
+  graph: ProjectContextGraphResponse,
+  nodeId: string,
+) {
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const evidenceIds = new Set<string>();
+  const capturedMemoryIds = new Set<string>();
+  for (const edge of graph.edges) {
+    if (edge.source !== nodeId) {
+      continue;
+    }
+    if (edge.kind === "derived_from") {
+      evidenceIds.add(edge.target);
+    }
+    if (edge.kind === "captured_in") {
+      capturedMemoryIds.add(edge.target);
+    }
   }
 
-  return (
-    <div className="context-graph-mobile" data-testid="context-graph-mobile">
-      <section className="context-graph-mobile-focus">
-        <header>
-          <div>
-            <Network aria-hidden="true" size={16} strokeWidth={1.7} />
-            <h3>{t("contextGraph.connectedContext")}</h3>
-          </div>
-          <small>{connections.length}</small>
-        </header>
+  for (const edge of graph.edges) {
+    if (edge.kind === "answered_by" && evidenceIds.has(edge.source)) {
+      evidenceIds.add(edge.target);
+    }
+  }
 
-        <div className="context-graph-mobile-anchor">
-          <ContextNodeButton
-            compact
-            isMuted={false}
-            isRelated
-            isSelected
-            mobile
-            node={selectedNode}
-            onSelect={onSelectNode}
-          />
-        </div>
-
-        {connections.length > 0 ? (
-          <ol className="context-graph-mobile-connections">
-            {connections.map((connection) => {
-              const relation = t(edgeTranslationKey(connection.edge));
-              const basis = t(
-                connection.edge.inferred
-                  ? "contextGraph.inferred"
-                  : "contextGraph.recorded",
-              );
-              return (
-                <li
-                  data-direction={connection.direction}
-                  data-inferred={connection.edge.inferred || undefined}
-                  key={`${connection.edge.id}:${connection.node.id}`}
-                >
-                  <span aria-hidden="true" className="context-graph-mobile-branch" />
-                  <span className="context-graph-mobile-relation">
-                    <span aria-hidden="true">
-                      {connection.direction === "outgoing" ? "→" : "←"}
-                    </span>
-                    {relation}
-                    <small>{basis}</small>
-                  </span>
-                  <ContextNodeButton
-                    compact
-                    isMuted={false}
-                    isRelated
-                    isSelected={false}
-                    mobile
-                    node={connection.node}
-                    onSelect={onSelectNode}
-                  />
-                </li>
-              );
-            })}
-          </ol>
-        ) : (
-          <p className="context-graph-mobile-empty">
-            {t("contextGraph.noConnections")}
-          </p>
-        )}
-      </section>
-
-      <section className="context-graph-mobile-index">
-        <header>
-          <h3>{t("contextGraph.nodes")}</h3>
-          <small>{layout.visibleNodes.length}</small>
-        </header>
-        <div>
-          {layout.lanes.map((lane) => {
-            const definition = laneDefinition(lane.kind);
-            const Icon = definition.icon;
-            if (lane.nodes.length === 0) {
-              return null;
-            }
-            return (
-              <section data-kind={lane.kind} key={lane.kind}>
-                <h4>
-                  <Icon aria-hidden="true" size={14} strokeWidth={1.7} />
-                  {t(definition.labelKey)}
-                  <small>{lane.nodes.length}</small>
-                </h4>
-                <div>
-                  {lane.nodes.map((node) => (
-                    <button
-                      aria-label={`${t(definition.labelKey)}: ${node.label}`}
-                      aria-pressed={selectedNode.id === node.id}
-                      data-selected={selectedNode.id === node.id || undefined}
-                      key={node.id}
-                      onClick={() => onSelectNode(node.id)}
-                      type="button"
-                    >
-                      <span aria-hidden="true" />
-                      <strong>{node.label}</strong>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            );
-          })}
-        </div>
-      </section>
-    </div>
+  const evidence = [...evidenceIds]
+    .map((id) => nodesById.get(id))
+    .filter((node): node is ProjectContextGraphNode => Boolean(node))
+    .sort((left, right) => {
+      const priority: Record<ProjectContextGraphNodeKind, number> = {
+        response: 0,
+        memory: 1,
+        prompt: 2,
+        file: 3,
+        decision: 4,
+        requirement: 4,
+        brainstorm: 4,
+        open_question: 4,
+      };
+      return priority[left.kind] - priority[right.kind];
+    });
+  const memories = [...capturedMemoryIds]
+    .map((id) => nodesById.get(id))
+    .filter((node): node is ProjectContextGraphNode => Boolean(node));
+  return [...evidence, ...memories].filter(
+    (node, index, values) =>
+      values.findIndex((candidate) => candidate.id === node.id) === index,
   );
+}
+
+function evidenceKindLabel(
+  node: ProjectContextGraphNode,
+  t: (key: TranslationKey, values?: Record<string, string | number>) => string,
+) {
+  if (node.kind === "response") {
+    return t("contextGraph.sourceOutput");
+  }
+  if (node.kind === "memory") {
+    return t("contextGraph.generatedMemory");
+  }
+  return t("contextGraph.sourceEvidence");
 }
 
 function ContextNodeInspector({
   connections,
+  evidence,
   inspectorRef,
+  isReviewing,
   node,
-  onClose,
   onOpenSession,
+  onReviewNode,
   onSelectNode,
 }: {
-  connections: ContextGraphConnection[];
+  connections: KnowledgeConnection[];
+  evidence: ProjectContextGraphNode[];
   inspectorRef: RefObject<HTMLElement | null>;
+  isReviewing: boolean;
   node: ProjectContextGraphNode | null;
-  onClose: () => void;
   onOpenSession?: (sessionId: string) => void;
+  onReviewNode: (
+    nodeId: string,
+    action: ProjectContextGraphNodeReviewAction,
+  ) => void;
   onSelectNode: (nodeId: string) => void;
 }) {
   const { localeTag, t } = useI18n();
-  if (!node) {
+  if (!node || !isKnowledgeNode(node)) {
     return (
       <aside
         className="context-graph-inspector context-graph-inspector-empty"
         ref={inspectorRef}
         tabIndex={-1}
       >
-        <Network aria-hidden="true" size={24} strokeWidth={1.4} />
+        <Network aria-hidden="true" size={22} strokeWidth={1.4} />
         <h3>{t("contextGraph.selectNode")}</h3>
         <p>{t("contextGraph.selectNodeDescription")}</p>
       </aside>
     );
   }
 
-  const definition = laneDefinition(node.kind);
-  const Icon = definition.icon;
+  const definition = NODE_DEFINITIONS[node.kind];
   const occurredAt = formatOccurredAt(node.occurred_at, localeTag);
-  const metadata = visibleContextGraphMetadata(node.metadata);
+  const metadata = visibleContextGraphMetadata(node.metadata).filter(
+    ([key]) => !["review_state", "subtype"].includes(key),
+  );
+  const reviewState = knowledgeNodeReviewState(node);
+  const layer = knowledgeNodeLayer(node);
+  const openableEvidence = evidence.find((item) => item.session_id);
+  const relatedNodeCount = connections.length;
 
   return (
     <aside
-      className="context-graph-inspector"
       aria-label={t("contextGraph.nodeDetails", { label: node.label })}
+      className="context-graph-inspector"
+      data-layer={layer}
       ref={inspectorRef}
       tabIndex={-1}
     >
-      <header>
-        <span className="context-graph-inspector-icon" data-kind={node.kind}>
-          <Icon aria-hidden="true" size={18} strokeWidth={1.7} />
+      <header className="context-graph-inspector-header">
+        <span>
+          {t(definition.labelKey)} · {t(`contextGraph.${layer}`)}
         </span>
-        <div>
-          <span>{t(definition.labelKey)}</span>
-          <h3>{node.label}</h3>
-        </div>
-        <button
-          aria-label={t("contextGraph.closeDetails")}
-          onClick={onClose}
-          type="button"
-        >
-          <X aria-hidden="true" size={16} strokeWidth={1.7} />
-        </button>
-      </header>
-
-      {node.summary ? <p className="context-graph-inspector-summary">{node.summary}</p> : null}
-
-      <dl className="context-graph-inspector-meta">
-        {occurredAt ? (
-          <div>
-            <dt>{t("contextGraph.occurred")}</dt>
-            <dd>
-              <time dateTime={node.occurred_at ?? undefined}>{occurredAt}</time>
-            </dd>
-          </div>
-        ) : null}
-        {node.sequence !== null ? (
-          <div>
-            <dt>{t("contextGraph.sequence")}</dt>
-            <dd>#{node.sequence}</dd>
-          </div>
-        ) : null}
-        <div>
-          <dt>{t("contextGraph.agentAccess")}</dt>
-          <dd>
+        <h3>{node.label}</h3>
+        {node.summary ? <p>{node.summary}</p> : null}
+        <div className="context-graph-inspector-badges">
+          <span data-state={layer}>{t(`contextGraph.${layer}`)}</span>
+          <span data-agent={node.agent_visible || undefined}>
             {node.agent_visible
               ? t("contextGraph.available")
               : t("contextGraph.notApproved")}
-          </dd>
+          </span>
         </div>
-        {node.session_id ? (
-          <div>
-            <dt>{t("contextGraph.session")}</dt>
-            <dd title={node.session_id}>{shortIdentifier(node.session_id)}</dd>
-          </div>
-        ) : null}
-        {metadata.map(([key, value]) => (
-          <div key={key}>
-            <dt>{key.replaceAll("_", " ")}</dt>
-            <dd>{formatMetadataValue(value)}</dd>
-          </div>
-        ))}
-      </dl>
+      </header>
 
-      {node.session_id && onOpenSession ? (
-        <button
-          className="context-graph-open-source"
-          onClick={() => onOpenSession(node.session_id!)}
-          type="button"
-        >
-          {t("contextGraph.openSourceSession")}
-          <ExternalLink aria-hidden="true" size={15} strokeWidth={1.7} />
-        </button>
-      ) : null}
+      <section className="context-graph-detail-section">
+        <h4>{t("contextGraph.whyItExists")}</h4>
+        <p>
+          {node.summary ??
+            t("contextGraph.noNodeSummary")}
+        </p>
+      </section>
 
-      <section className="context-graph-connections" aria-labelledby="context-graph-connections-title">
-        <div>
-          <h4 id="context-graph-connections-title">
-            {t("contextGraph.connectedContext")}
-          </h4>
-          <span>{connections.length}</span>
+      <section className="context-graph-detail-section">
+        <div className="context-graph-section-heading">
+          <h4>{t("contextGraph.sourceOutput")}</h4>
+          <span>{evidence.length}</span>
         </div>
-        {connections.length > 0 ? (
-          <ul>
-            {connections.slice(0, 8).map((connection) => {
-              const relation = t(edgeTranslationKey(connection.edge));
-              const direction = t(
-                connection.direction === "outgoing"
-                  ? "contextGraph.outgoingConnection"
-                  : "contextGraph.incomingConnection",
-              );
-              const basis = t(
-                connection.edge.inferred
-                  ? "contextGraph.inferred"
-                  : "contextGraph.recorded",
-              );
-              return (
-                <li key={`${connection.edge.id}:${connection.node.id}`}>
+        {evidence.length > 0 ? (
+          <div className="context-graph-evidence-list">
+            {evidence.slice(0, 3).map((source) => (
+              <article key={source.id}>
+                <span>{evidenceKindLabel(source, t)}</span>
+                <strong>{source.label}</strong>
+                {source.summary ? <p>{source.summary}</p> : null}
+                {source.session_id && onOpenSession ? (
                   <button
-                    aria-label={t("contextGraph.connectionLabel", {
-                      basis,
-                      direction,
-                      label: connection.node.label,
-                      relation,
-                    })}
-                    onClick={() => onSelectNode(connection.node.id)}
+                    onClick={() => onOpenSession(source.session_id!)}
                     type="button"
                   >
-                    <span data-kind={connection.node.kind} />
-                    <strong>{connection.node.label}</strong>
-                    <small>
-                      <span aria-hidden="true">
-                        {connection.direction === "outgoing" ? "→" : "←"}
-                      </span>{" "}
-                      {relation} · {basis} ·{" "}
-                      {t(laneDefinition(connection.node.kind).labelKey)}
-                    </small>
+                    {t("contextGraph.openSourceSession")}
+                    <ExternalLink
+                      aria-hidden="true"
+                      size={13}
+                      strokeWidth={1.7}
+                    />
                   </button>
-                </li>
-              );
-            })}
-          </ul>
+                ) : null}
+              </article>
+            ))}
+          </div>
         ) : (
-          <p>{t("contextGraph.noConnections")}</p>
+          <p className="context-graph-detail-empty">
+            {t("contextGraph.sourceOutputEmpty")}
+          </p>
         )}
       </section>
+
+      <section className="context-graph-detail-section">
+        <div className="context-graph-section-heading">
+          <h4>{t("contextGraph.relationships")}</h4>
+          <span>{relatedNodeCount}</span>
+        </div>
+        {connections.length > 0 ? (
+          <ul className="context-graph-relationship-list">
+            {connections.slice(0, 8).map((connection) => (
+              <li key={`${connection.edge.id}:${connection.node.id}`}>
+                <button
+                  onClick={() => onSelectNode(connection.node.id)}
+                  type="button"
+                >
+                  <span data-kind={connection.node.kind}>
+                    {NODE_DEFINITIONS[
+                      connection.node.kind as KnowledgeNodeKind
+                    ]?.mark ?? "·"}
+                  </span>
+                  <span>
+                    <small>{t(edgeTranslationKey(connection.edge))}</small>
+                    <strong>{connection.node.label}</strong>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="context-graph-detail-empty">
+            {t("contextGraph.noConnections")}
+          </p>
+        )}
+      </section>
+
+      <section className="context-graph-detail-section">
+        <h4>{t("contextGraph.history")}</h4>
+        <dl className="context-graph-inspector-meta">
+          {occurredAt ? (
+            <div>
+              <dt>{t("contextGraph.extractedFromOutput")}</dt>
+              <dd>
+                <time dateTime={node.occurred_at ?? undefined}>
+                  {occurredAt}
+                </time>
+              </dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>{t("contextGraph.reviewState")}</dt>
+            <dd>{t(`contextGraph.${layer}`)}</dd>
+          </div>
+          {metadata.map(([key, value]) => (
+            <div key={key}>
+              <dt>{key.replaceAll("_", " ")}</dt>
+              <dd>{formatMetadataValue(value)}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <div className="context-graph-inspector-actions">
+        <button
+          aria-pressed={reviewState === "confirmed"}
+          className="context-graph-confirm-action"
+          disabled={isReviewing}
+          onClick={() =>
+            onReviewNode(
+              node.id,
+              reviewState === "confirmed" ? "reset" : "confirm",
+            )
+          }
+          type="button"
+        >
+          <ThumbsUp aria-hidden="true" size={14} strokeWidth={1.7} />
+          {isReviewing
+            ? t("contextGraph.reviewing")
+            : t("contextGraph.confirmKnowledge")}
+        </button>
+        <button
+          aria-pressed={reviewState === "rejected"}
+          className="context-graph-exclude-action"
+          disabled={isReviewing}
+          onClick={() =>
+            onReviewNode(
+              node.id,
+              reviewState === "rejected" ? "reset" : "reject",
+            )
+          }
+          type="button"
+        >
+          <ThumbsDown aria-hidden="true" size={14} strokeWidth={1.7} />
+          {t("contextGraph.rejectKnowledge")}
+        </button>
+        {openableEvidence?.session_id && onOpenSession ? (
+          <button
+            className="context-graph-source-action"
+            onClick={() => onOpenSession(openableEvidence.session_id!)}
+            type="button"
+          >
+            {t("contextGraph.openSourceOutput")}
+            <ExternalLink aria-hidden="true" size={14} strokeWidth={1.7} />
+          </button>
+        ) : null}
+      </div>
     </aside>
   );
 }
@@ -773,8 +945,8 @@ export function ContextGraphPanel({
 }) {
   const { t } = useI18n();
   const [searchState, setSearchState] = useState({ projectId, value: "" });
-  const searchInput = searchState.projectId === projectId ? searchState.value : "";
-  const debouncedQuery = useDebouncedProjectQuery(projectId, searchInput, 300);
+  const searchInput =
+    searchState.projectId === projectId ? searchState.value : "";
   const [graphState, setGraphState] = useState<{
     projectId: string;
     response: ProjectContextGraphResponse;
@@ -783,11 +955,15 @@ export function ContextGraphPanel({
   const [isLoading, setIsLoading] = useState(true);
   const [requestVersion, setRequestVersion] = useState(0);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [reviewingNodeId, setReviewingNodeId] = useState<string | null>(null);
+  const [layerFilter, setLayerFilter] =
+    useState<KnowledgeLayerFilter>("all");
+  const [enabledKinds, setEnabledKinds] = useState<
+    Set<ProjectContextGraphNodeKind>
+  >(() => new Set(KNOWLEDGE_NODE_KINDS));
   const inspectorRef = useRef<HTMLElement | null>(null);
-  const [enabledKinds, setEnabledKinds] = useState<Set<ProjectContextGraphNodeKind>>(
-    () => new Set(ALL_NODE_KINDS),
-  );
-  const graph = graphState?.projectId === projectId ? graphState.response : null;
+  const graph =
+    graphState?.projectId === projectId ? graphState.response : null;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -795,7 +971,6 @@ export function ContextGraphPanel({
     setErrorMessage(null);
     void fetchProjectContextGraph(projectId, {
       limit: CONTEXT_GRAPH_LIMIT,
-      query: debouncedQuery,
       signal: controller.signal,
     })
       .then((response) => {
@@ -809,7 +984,9 @@ export function ContextGraphPanel({
         }
         if (!controller.signal.aborted) {
           setErrorMessage(
-            error instanceof Error ? error.message : t("contextGraph.requestFailed"),
+            error instanceof Error
+              ? error.message
+              : t("contextGraph.requestFailed"),
           );
         }
       })
@@ -818,39 +995,69 @@ export function ContextGraphPanel({
           setIsLoading(false);
         }
       });
-
     return () => controller.abort();
-  }, [debouncedQuery, projectId, requestVersion, t]);
+  }, [projectId, requestVersion, t]);
 
+  const knowledgeNodes = useMemo(
+    () => graph?.nodes.filter(isKnowledgeNode) ?? [],
+    [graph?.nodes],
+  );
+  const layerCounts = useMemo(
+    () =>
+      knowledgeNodes.reduce(
+        (counts, node) => {
+          counts[knowledgeNodeLayer(node)] += 1;
+          return counts;
+        },
+        { archived: 0, confirmed: 0, pending: 0 },
+      ),
+    [knowledgeNodes],
+  );
   const layout = useMemo(
-    () => buildContextGraphLayout(graph?.nodes ?? [], graph?.edges ?? [], enabledKinds),
-    [enabledKinds, graph?.edges, graph?.nodes],
+    () =>
+      buildContextGraphLayout(
+        graph?.nodes ?? [],
+        graph?.edges ?? [],
+        enabledKinds,
+        layerFilter,
+        searchInput,
+      ),
+    [
+      enabledKinds,
+      graph?.edges,
+      graph?.nodes,
+      layerFilter,
+      searchInput,
+    ],
   );
   const selectedNode =
-    layout.visibleNodes.find((node) => node.id === selectedNodeId) ?? null;
-  const connections = useMemo<ContextGraphConnection[]>(() => {
-    if (!selectedNodeId || !graph) {
+    knowledgeNodes.find((node) => node.id === selectedNodeId) ?? null;
+  const visibleNodesById = useMemo(
+    () => new Map(layout.visibleNodes.map((node) => [node.id, node])),
+    [layout.visibleNodes],
+  );
+  const connections = useMemo<KnowledgeConnection[]>(() => {
+    if (!selectedNodeId) {
       return [];
     }
-    const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
-    return graph.edges.flatMap<ContextGraphConnection>(
-      (edge): ContextGraphConnection[] => {
-        if (edge.source === selectedNodeId) {
-          const node = nodesById.get(edge.target);
-          return node && enabledKinds.has(node.kind)
-            ? [{ direction: "outgoing" as const, edge, node }]
-            : [];
-        }
-        if (edge.target === selectedNodeId) {
-          const node = nodesById.get(edge.source);
-          return node && enabledKinds.has(node.kind)
-            ? [{ direction: "incoming" as const, edge, node }]
-            : [];
-        }
-        return [];
+    return layout.edges.flatMap<KnowledgeConnection>(
+      (edge): KnowledgeConnection[] => {
+      if (edge.source === selectedNodeId) {
+        const node = visibleNodesById.get(edge.target);
+        return node
+          ? [{ direction: "outgoing" as const, edge, node }]
+          : [];
+      }
+      if (edge.target === selectedNodeId) {
+        const node = visibleNodesById.get(edge.source);
+        return node
+          ? [{ direction: "incoming" as const, edge, node }]
+          : [];
+      }
+      return [];
       },
     );
-  }, [enabledKinds, graph, selectedNodeId]);
+  }, [layout.edges, selectedNodeId, visibleNodesById]);
   const relatedNodeIds = useMemo(() => {
     const ids = new Set(connections.map((connection) => connection.node.id));
     if (selectedNodeId) {
@@ -858,24 +1065,30 @@ export function ContextGraphPanel({
     }
     return ids;
   }, [connections, selectedNodeId]);
+  const evidence = useMemo(
+    () =>
+      graph && selectedNodeId
+        ? sourceEvidenceNodes(graph, selectedNodeId)
+        : [],
+    [graph, selectedNodeId],
+  );
 
   useEffect(() => {
     setSelectedNodeId((currentNodeId) => {
-      if (
-        currentNodeId &&
-        layout.visibleNodes.some((node) => node.id === currentNodeId)
-      ) {
+      if (currentNodeId && visibleNodesById.has(currentNodeId)) {
         return currentNodeId;
       }
       const preferredNode =
-        layout.visibleNodes.find((node) => node.kind === "memory") ??
+        layout.visibleNodes.find(
+          (node) => knowledgeNodeLayer(node) === "confirmed",
+        ) ??
         layout.visibleNodes[0] ??
         null;
       return preferredNode?.id ?? null;
     });
-  }, [layout.visibleNodes]);
+  }, [layout.visibleNodes, visibleNodesById]);
 
-  const toggleKind = (kind: ProjectContextGraphNodeKind) => {
+  const toggleKind = (kind: KnowledgeNodeKind) => {
     setEnabledKinds((currentKinds) => {
       const nextKinds = new Set(currentKinds);
       if (nextKinds.has(kind)) {
@@ -894,7 +1107,7 @@ export function ContextGraphPanel({
     setSelectedNodeId(nodeId);
     if (
       typeof window.matchMedia !== "function" ||
-      !window.matchMedia("(max-width: 760px)").matches
+      !window.matchMedia("(max-width: 900px)").matches
     ) {
       return;
     }
@@ -914,30 +1127,58 @@ export function ContextGraphPanel({
     });
   };
 
-  const nodeCount = graph?.nodes.length ?? 0;
-  const edgeCount = graph?.edges.length ?? 0;
-  const isSettlingSearch = searchInput.trim() !== debouncedQuery.trim();
+  const reviewKnowledgeNode = async (
+    nodeId: string,
+    action: ProjectContextGraphNodeReviewAction,
+  ) => {
+    setReviewingNodeId(nodeId);
+    setErrorMessage(null);
+    try {
+      const review = await reviewProjectContextGraphNode(
+        projectId,
+        nodeId,
+        action,
+      );
+      setGraphState((current) => {
+        if (!current || current.projectId !== projectId) {
+          return current;
+        }
+        return {
+          ...current,
+          response: applyKnowledgeNodeReview(current.response, review),
+        };
+      });
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : t("contextGraph.reviewFailed"),
+      );
+    } finally {
+      setReviewingNodeId(null);
+    }
+  };
 
   return (
-    <section className="context-graph-panel" aria-labelledby="context-graph-title">
+    <section
+      aria-labelledby="context-graph-title"
+      className="context-graph-panel"
+    >
       <header className="context-graph-heading">
         <div>
           <span className="context-graph-eyebrow">
-            <Network aria-hidden="true" size={14} strokeWidth={1.7} />
             {t("contextGraph.eyebrow")}
           </span>
           <h2 id="context-graph-title">{t("contextGraph.title")}</h2>
           <p>{t("contextGraph.description")}</p>
         </div>
         <dl aria-label={t("contextGraph.graphSummary")}>
-          <div>
-            <dt>{t("contextGraph.nodes")}</dt>
-            <dd>{nodeCount}</dd>
-          </div>
-          <div>
-            <dt>{t("contextGraph.links")}</dt>
-            <dd>{edgeCount}</dd>
-          </div>
+          {LAYER_DEFINITIONS.map((definition) => (
+            <div data-layer={definition.layer} key={definition.layer}>
+              <dd>{layerCounts[definition.layer]}</dd>
+              <dt>{t(definition.labelKey)}</dt>
+            </div>
+          ))}
         </dl>
       </header>
 
@@ -955,25 +1196,25 @@ export function ContextGraphPanel({
             type="search"
             value={searchInput}
           />
-          {isLoading || isSettlingSearch ? <span aria-hidden="true" /> : null}
         </label>
         <div
-          className="context-graph-filters"
           aria-label={t("contextGraph.nodeTypes")}
+          className="context-graph-kind-filters"
           role="group"
         >
-          {LANE_DEFINITIONS.map((definition) => {
-            const count =
-              graph?.facets[definition.kind] ??
-              graph?.nodes.filter((node) => node.kind === definition.kind).length ??
-              0;
+          {KNOWLEDGE_NODE_KINDS.map((kind) => {
+            const definition = NODE_DEFINITIONS[kind];
+            const isActive = enabledKinds.has(kind);
+            const count = knowledgeNodes.filter(
+              (node) => node.kind === kind,
+            ).length;
             return (
               <button
-                aria-pressed={enabledKinds.has(definition.kind)}
-                data-active={enabledKinds.has(definition.kind) || undefined}
-                data-kind={definition.kind}
-                key={definition.kind}
-                onClick={() => toggleKind(definition.kind)}
+                aria-pressed={isActive}
+                data-active={isActive || undefined}
+                data-kind={kind}
+                key={kind}
+                onClick={() => toggleKind(kind)}
                 type="button"
               >
                 <span />
@@ -983,35 +1224,40 @@ export function ContextGraphPanel({
             );
           })}
         </div>
-        <div className="context-graph-toolbar-status">
-          <span className="context-graph-result-status" role="status">
-            {isLoading
-              ? t("contextGraph.updating")
-              : t("contextGraph.visibleNodes", {
-                  count: layout.visibleNodes.length,
-                })}
-          </span>
-          <span className="context-graph-basis-legend">
-            <span>
-              <i aria-hidden="true" />
-              {t("contextGraph.recorded")}
-            </span>
-            <span data-inferred="true">
-              <i aria-hidden="true" />
-              {t("contextGraph.inferred")}
-            </span>
-          </span>
+        <div
+          aria-label={t("contextGraph.layers")}
+          className="context-graph-layer-filters"
+          role="group"
+        >
+          {(["all", "pending", "confirmed", "archived"] as const).map(
+            (layer) => (
+              <button
+                aria-pressed={layerFilter === layer}
+                data-active={layerFilter === layer || undefined}
+                key={layer}
+                onClick={() => setLayerFilter(layer)}
+                type="button"
+              >
+                {t(`contextGraph.${layer}`)}
+              </button>
+            ),
+          )}
         </div>
+        <span className="context-graph-result-status" role="status">
+          {t("contextGraph.outputsOnly", {
+            count: layout.visibleNodes.length,
+          })}
+        </span>
       </div>
 
       {graph?.safety_notice ? (
         <div className="context-graph-safety-note">
-          <ShieldCheck aria-hidden="true" size={16} strokeWidth={1.7} />
+          <ShieldCheck aria-hidden="true" size={15} strokeWidth={1.7} />
           <span>{graph.safety_notice}</span>
         </div>
       ) : null}
 
-      {graph?.truncated ? (
+      {graph?.truncated || layout.hiddenNodeCount > 0 ? (
         <div className="context-graph-truncated" role="status">
           {t("contextGraph.truncated")}
         </div>
@@ -1020,7 +1266,10 @@ export function ContextGraphPanel({
       {errorMessage && graph ? (
         <div className="context-graph-inline-error" role="alert">
           <span>{errorMessage}</span>
-          <button onClick={() => setRequestVersion((version) => version + 1)} type="button">
+          <button
+            onClick={() => setRequestVersion((version) => version + 1)}
+            type="button"
+          >
             {t("common.retry")}
           </button>
         </div>
@@ -1028,11 +1277,10 @@ export function ContextGraphPanel({
 
       {!graph && isLoading ? (
         <div
-          className="context-graph-loading"
           aria-label={t("contextGraph.loading")}
+          className="context-graph-loading"
           role="status"
         >
-          <span />
           <span />
           <span />
           <span />
@@ -1042,13 +1290,16 @@ export function ContextGraphPanel({
           <RefreshCw aria-hidden="true" size={22} strokeWidth={1.5} />
           <h3>{t("contextGraph.loadFailedTitle")}</h3>
           <p>{errorMessage}</p>
-          <button onClick={() => setRequestVersion((version) => version + 1)} type="button">
+          <button
+            onClick={() => setRequestVersion((version) => version + 1)}
+            type="button"
+          >
             {t("contextGraph.tryAgain")}
           </button>
         </div>
       ) : layout.visibleNodes.length === 0 ? (
         <div className="context-graph-empty" role="status">
-          <Search aria-hidden="true" size={22} strokeWidth={1.5} />
+          <Network aria-hidden="true" size={22} strokeWidth={1.5} />
           <h3>{t("contextGraph.emptyTitle")}</h3>
           <p>{t("contextGraph.emptyDescription")}</p>
         </div>
@@ -1061,19 +1312,17 @@ export function ContextGraphPanel({
               relatedNodeIds={relatedNodeIds}
               selectedNodeId={selectedNodeId}
             />
-            <ContextGraphMobile
-              connections={connections}
-              layout={layout}
-              onSelectNode={selectGraphNode}
-              selectedNodeId={selectedNodeId}
-            />
           </div>
           <ContextNodeInspector
             connections={connections}
+            evidence={evidence}
             inspectorRef={inspectorRef}
+            isReviewing={reviewingNodeId === selectedNode?.id}
             node={selectedNode}
-            onClose={() => setSelectedNodeId(null)}
             onOpenSession={onOpenSession}
+            onReviewNode={(nodeId, action) => {
+              void reviewKnowledgeNode(nodeId, action);
+            }}
             onSelectNode={selectGraphNode}
           />
         </div>

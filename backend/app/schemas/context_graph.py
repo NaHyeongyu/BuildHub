@@ -5,8 +5,24 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-ContextGraphNodeKind = Literal["prompt", "response", "file", "memory"]
-ContextGraphEdgeKind = Literal["answered_by", "changed", "captured_in", "references"]
+ContextGraphNodeKind = Literal[
+    "prompt",
+    "response",
+    "file",
+    "decision",
+    "requirement",
+    "brainstorm",
+    "open_question",
+    "memory",
+]
+ContextGraphEdgeKind = Literal[
+    "answered_by",
+    "changed",
+    "captured_in",
+    "derived_from",
+    "references",
+    "supersedes",
+]
 
 
 class StrictResponse(BaseModel):
@@ -40,3 +56,13 @@ class ContextGraphResponse(StrictResponse):
     query: str | None
     truncated: bool
     safety_notice: str
+
+
+class ContextGraphNodeReviewRequest(StrictResponse):
+    action: Literal["confirm", "reject", "reset"]
+
+
+class ContextGraphNodeReviewResponse(StrictResponse):
+    node_id: str
+    review_state: Literal["confirmed", "rejected", "unreviewed"]
+    reviewed_at: str | None

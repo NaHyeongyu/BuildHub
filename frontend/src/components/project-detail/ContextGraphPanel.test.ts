@@ -5,7 +5,9 @@ import type {
   ProjectContextGraphNodeKind,
 } from "../../api/projects";
 import {
+  applyKnowledgeNodeReview,
   buildContextGraphLayout,
+  knowledgeNodeLayer,
   visibleContextGraphMetadata,
 } from "./ContextGraphPanel";
 import componentSource from "./ContextGraphPanel.tsx?raw";
@@ -16,7 +18,7 @@ function graphNode(
   overrides: Partial<ProjectContextGraphNode> = {},
 ): ProjectContextGraphNode {
   return {
-    agent_visible: true,
+    agent_visible: false,
     id,
     kind,
     label: id,
@@ -30,118 +32,188 @@ function graphNode(
 }
 
 describe("ContextGraphPanel", () => {
-  it("builds stable four-lane positions and drops dangling links", () => {
+  it("projects only output-derived knowledge into three review layers", () => {
     const nodes = [
-      graphNode("prompt-later", "prompt", { sequence: 2 }),
+      graphNode("prompt", "prompt"),
+      graphNode("response", "response"),
+      graphNode("decision", "decision"),
+      graphNode("requirement", "requirement", {
+        metadata: { review_state: "confirmed", status: "active" },
+      }),
+      graphNode("idea", "brainstorm", {
+        metadata: { review_state: "rejected", status: "discarded" },
+      }),
+      graphNode("question", "open_question", {
+        metadata: { status: "open" },
+      }),
       graphNode("memory", "memory"),
       graphNode("file", "file"),
-      graphNode("prompt-first", "prompt", { sequence: 1 }),
-      graphNode("response", "response"),
-      graphNode("prompt-first", "prompt", { sequence: 1 }),
+    ];
+
+    const layout = buildContextGraphLayout(nodes, []);
+
+    expect(layout.layers.map((layer) => layer.layer)).toEqual([
+      "pending",
+      "confirmed",
+      "archived",
+    ]);
+    expect(layout.visibleNodes.map((node) => node.id)).toEqual([
+      "decision",
+      "question",
+      "requirement",
+      "idea",
+    ]);
+    expect(layout.layers[0].nodes.map((node) => node.id)).toEqual([
+      "decision",
+      "question",
+    ]);
+    expect(layout.layers[1].nodes.map((node) => node.id)).toEqual([
+      "requirement",
+    ]);
+    expect(layout.layers[2].nodes.map((node) => node.id)).toEqual(["idea"]);
+    expect(layout.nodePositions.requirement.layer).toBe("confirmed");
+  });
+
+  it("draws a truthful relation when knowledge nodes share source evidence", () => {
+    const nodes = [
+      graphNode("decision", "decision"),
+      graphNode("requirement", "requirement"),
+      graphNode("prompt", "prompt"),
     ];
     const edges: ProjectContextGraphEdge[] = [
       {
-        id: "answered",
-        inferred: false,
-        kind: "answered_by",
-        source: "prompt-first",
-        target: "response",
-      },
-      {
-        id: "changed",
-        inferred: false,
-        kind: "changed",
-        source: "response",
-        target: "file",
-      },
-      {
-        id: "dangling",
+        id: "decision-source",
         inferred: true,
-        kind: "references",
-        source: "missing",
-        target: "memory",
+        kind: "derived_from",
+        source: "decision",
+        target: "prompt",
+      },
+      {
+        id: "requirement-source",
+        inferred: true,
+        kind: "derived_from",
+        source: "requirement",
+        target: "prompt",
       },
     ];
 
     const layout = buildContextGraphLayout(nodes, edges);
 
-    expect(layout.lanes.map((lane) => lane.kind)).toEqual([
-      "prompt",
-      "response",
-      "file",
-      "memory",
-    ]);
-    expect(layout.lanes[0].nodes.map((node) => node.id)).toEqual([
-      "prompt-first",
-      "prompt-later",
-    ]);
-    expect(layout.visibleNodes).toHaveLength(5);
-    expect(layout.edges.map((edge) => edge.id)).toEqual(["answered", "changed"]);
-    expect(layout.edges.every((edge) => edge.path.startsWith("M "))).toBe(true);
-    expect(layout.nodePositions.memory.laneIndex).toBe(3);
+    expect(layout.edges).toHaveLength(1);
+    expect(layout.edges[0]).toMatchObject({
+      inferred: true,
+      kind: "shared_evidence",
+      source: "decision",
+      target: "requirement",
+    });
+    expect(layout.edges[0].path.startsWith("M ")).toBe(true);
   });
 
-  it("removes links whose endpoints are hidden by a node type filter", () => {
-    const enabledKinds = new Set<ProjectContextGraphNodeKind>(["prompt", "file"]);
-    const layout = buildContextGraphLayout(
-      [
-        graphNode("prompt", "prompt"),
-        graphNode("response", "response"),
-        graphNode("file", "file"),
-      ],
-      [
-        {
-          id: "prompt-response",
-          inferred: false,
-          kind: "answered_by",
-          source: "prompt",
-          target: "response",
-        },
-        {
-          id: "prompt-file",
-          inferred: true,
-          kind: "changed",
-          source: "prompt",
-          target: "file",
-        },
-      ],
-      enabledKinds,
-    );
+  it("filters by knowledge type, review layer, and local text query", () => {
+    const nodes = [
+      graphNode("decision", "decision", {
+        label: "Use output-only extraction",
+      }),
+      graphNode("requirement", "requirement", {
+        label: "Keep source evidence",
+        metadata: { review_state: "confirmed" },
+      }),
+      graphNode("idea", "brainstorm", {
+        label: "Try a five-lane view",
+        metadata: { status: "discarded" },
+      }),
+    ];
+    const kinds = new Set<ProjectContextGraphNodeKind>([
+      "decision",
+      "requirement",
+    ]);
 
-    expect(layout.visibleNodes.map((node) => node.id)).toEqual(["prompt", "file"]);
-    expect(layout.edges.map((edge) => edge.id)).toEqual(["prompt-file"]);
+    expect(
+      buildContextGraphLayout(nodes, [], kinds, "all", "output").visibleNodes
+        .map((node) => node.id),
+    ).toEqual(["decision"]);
+    expect(
+      buildContextGraphLayout(nodes, [], kinds, "confirmed").visibleNodes.map(
+        (node) => node.id,
+      ),
+    ).toEqual(["requirement"]);
   });
 
-  it("allows concise provenance metadata but never renders patches or content", () => {
+  it("maps discarded, superseded, and rejected knowledge to archive", () => {
+    expect(
+      knowledgeNodeLayer(
+        graphNode("discarded", "brainstorm", {
+          metadata: { status: "discarded" },
+        }),
+      ),
+    ).toBe("archived");
+    expect(
+      knowledgeNodeLayer(
+        graphNode("superseded", "decision", {
+          metadata: { status: "superseded" },
+        }),
+      ),
+    ).toBe("archived");
+    expect(
+      knowledgeNodeLayer(
+        graphNode("confirmed", "requirement", {
+          metadata: { review_state: "confirmed" },
+        }),
+      ),
+    ).toBe("confirmed");
+  });
+
+  it("allows concise provenance metadata but never renders source content", () => {
     const metadata = visibleContextGraphMetadata({
-      additions: 14,
-      content: "private source code",
+      confidence: 0.91,
+      content: "private source content",
       diff: "+ secret",
-      model: "gpt-5",
       patch: "@@ -1 +1 @@",
       random_internal_value: "hidden",
-      tags: ["auth", "frontend"],
+      review_state: "confirmed",
+      source_event_ids: ["private-id"],
+      status: "active",
     });
 
     expect(Object.fromEntries(metadata)).toEqual({
-      additions: 14,
-      model: "gpt-5",
-      tags: ["auth", "frontend"],
+      confidence: 0.91,
+      review_state: "confirmed",
+      status: "active",
     });
   });
 
-  it("keeps desktop edges decorative and supplies a semantic mobile outline", () => {
-    expect(componentSource).toContain('aria-hidden="true"');
-    expect(componentSource).toContain('type="search"');
-    expect(componentSource).toContain('className="context-graph-mobile"');
-    expect(componentSource).toContain('className="context-graph-edges"');
-    expect(componentSource).toContain("<ol>");
+  it("keeps the map minimal and moves evidence, review, and history into details", () => {
+    expect(componentSource).toContain('className="context-graph-plane"');
+    expect(componentSource).toContain('className="context-graph-node-orbit"');
+    expect(componentSource).toContain('className="context-graph-evidence-list"');
+    expect(componentSource).toContain('className="context-graph-relationship-list"');
+    expect(componentSource).toContain('className="context-graph-inspector-meta"');
+    expect(componentSource).toContain("reviewProjectContextGraphNode");
+    expect(componentSource).toContain("Intl.DateTimeFormat(localeTag");
+    expect(componentSource).not.toContain("context-graph-node-summary");
   });
 
-  it("formats node timestamps with the selected application locale", () => {
-    expect(componentSource).toContain("Intl.DateTimeFormat(localeTag");
-    expect(
-      componentSource.match(/formatOccurredAt\(node\.occurred_at, localeTag\)/g),
-    ).toHaveLength(2);
+  it("applies a node review locally without refetching the whole graph", () => {
+    const graph = {
+      edges: [],
+      facets: {},
+      nodes: [graphNode("decision", "decision")],
+      query: null,
+      safety_notice: "Review generated knowledge.",
+      truncated: false,
+    };
+
+    const reviewed = applyKnowledgeNodeReview(graph, {
+      node_id: "decision",
+      review_state: "confirmed",
+      reviewed_at: "2026-07-25T12:00:00Z",
+    });
+
+    expect(reviewed.nodes[0].metadata).toEqual({
+      evidence_type: "confirmed",
+      review_state: "confirmed",
+      reviewed_at: "2026-07-25T12:00:00Z",
+    });
+    expect(reviewed.edges).toBe(graph.edges);
   });
 });

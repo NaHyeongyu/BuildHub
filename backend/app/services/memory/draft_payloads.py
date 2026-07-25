@@ -10,6 +10,7 @@ from app.services.memory.context import (
     truncate,
 )
 from app.services.memory.errors import MemoryGenerationError
+from app.services.memory.knowledge import build_memory_knowledge_projection
 from app.services.memory.providers import (
     generator_for_provider,
     model_metadata_for_provider,
@@ -115,13 +116,23 @@ def _sections_from_memory_draft(draft: dict[str, Any]) -> list[dict[str, str]]:
             else [],
         ),
         _section_from_strings(
+            "Requirements",
+            [
+                item.get("requirement")
+                for item in details.get("requirements", [])
+                if isinstance(item, dict) and isinstance(item.get("requirement"), str)
+            ]
+            if isinstance(details.get("requirements"), list)
+            else [],
+        ),
+        _section_from_strings(
             "Follow-ups",
             [*rejected_directions, *follow_ups, *open_questions],
         ),
     ):
         if section is not None:
             sections.append(section)
-    return sections[:4]
+    return sections[:5]
 
 
 def _draft_generation_summary(response: dict[str, Any]) -> dict[str, Any]:
@@ -238,6 +249,7 @@ def build_memory_draft_payloads_from_context(
             "draft_evidence": draft.get("evidence"),
             "draft_index": index,
             "draft_type": draft.get("type"),
+            "knowledge_projection": build_memory_knowledge_projection(draft),
             "needs_user_verification": draft.get("needs_user_verification") is True,
             "overall_uncertainty_count": len(
                 response.get("overall_uncertainties", [])

@@ -624,6 +624,7 @@ def build_pending_memory_draft_payload(
         slice_metadata.get("window_reason") == "event_count_continuation"
         or slice_metadata.get("window_truncated") is True
     )
+    memory_slice_kind = slice_metadata.get("memory_slice_kind")
     title = title_from_session(
         prompts=context["prompt_events"],
         project_name=context["project_name"],
@@ -664,7 +665,12 @@ def build_pending_memory_draft_payload(
             "Bounded continuation of an eligible prompt window; the prompt is context-only "
             "and event coverage remains unique to this slice."
             if is_continuation
-            else "Prompt input, AI output, and file-change detection are all available."
+            else (
+                "Prompt input and AI output are available for reasoning memory generation; "
+                "no file change was required."
+                if memory_slice_kind == "reasoning"
+                else "Prompt input, AI output, and file-change detection are all available."
+            )
         ),
         "sections": sections,
         "summary": summary,
@@ -676,6 +682,9 @@ def build_pending_memory_draft_payload(
                         model=context["model"],
                         tool=context["tool"],
                     ),
+                    memory_slice_kind
+                    if memory_slice_kind in {"implementation", "reasoning"}
+                    else "continuation",
                     "pending-draft",
                 ]
             )

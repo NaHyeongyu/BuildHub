@@ -217,6 +217,12 @@ def clean_memory_drafts_response(value: Any, context: dict[str, Any]) -> dict[st
                 fallback_event_ids=draft_event_ids,
                 required_text_key="content",
             ),
+            "requirements": _clean_draft_nested_items(
+                details.get("requirements"),
+                fallback_chunk_ids=draft_chunk_ids,
+                fallback_event_ids=draft_event_ids,
+                required_text_key="requirement",
+            ),
             "summary": clean_text(details.get("summary")) or None,
             "tasks": _clean_string_list(
                 details.get("tasks") or details.get("what_happened"),
@@ -311,6 +317,35 @@ def _clean_memory_id_items(
     return cleaned
 
 
+def _clean_superseded_decisions(
+    value: Any,
+    *,
+    fallback_ids: list[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for item in value[:MAX_SEMANTIC_LIST_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        decision = clean_text(item.get("decision"))
+        superseded_by = clean_text(item.get("superseded_by"))
+        if not decision or not superseded_by:
+            continue
+        cleaned.append(
+            {
+                "decision": decision,
+                "reason": clean_text(item.get("reason")) or "",
+                "source_memory_ids": _clean_source_ids(
+                    item.get("source_memory_ids"),
+                    fallback_ids,
+                ),
+                "superseded_by": superseded_by,
+            }
+        )
+    return cleaned
+
+
 def clean_project_memory_response(value: Any, context: dict[str, Any]) -> dict[str, Any]:
     fallback_ids = _source_memory_ids_from_context(context)
     parsed = value if isinstance(value, dict) else {}
@@ -328,10 +363,15 @@ def clean_project_memory_response(value: Any, context: dict[str, Any]) -> dict[s
         "instructions_for_future_ai_agents": [],
         "open_questions": _clean_string_list(sections.get("open_questions"), limit=None),
         "product_goal": clean_text(sections.get("product_goal")),
+        "requirements": _clean_string_list(sections.get("requirements"), limit=None),
         "rejected_directions": _clean_memory_id_items(
             sections.get("rejected_directions"),
             fallback_ids=fallback_ids,
             key="direction",
+        ),
+        "superseded_decisions": _clean_superseded_decisions(
+            sections.get("superseded_decisions"),
+            fallback_ids=fallback_ids,
         ),
         "technical_assumptions": _clean_string_list(
             sections.get("technical_assumptions"),

@@ -404,6 +404,8 @@ export function promptActivityItemFromApi(
   activity: ProjectPromptActivityApiItem,
 ): PromptActivityItem {
   return {
+    continuationOf: activity.continuation_of,
+    deliveryMode: activity.delivery_mode,
     fileChanges: (activity.file_changes ?? []).map((change) => ({
       additions: change.additions,
       binary: change.binary,
@@ -430,8 +432,10 @@ export function promptActivityItemFromApi(
     responseSource: activity.response_source,
     responseStorageLimit: activity.response_storage_limit,
     responseTruncated: activity.response_truncated,
+    rootPromptEventId: activity.root_prompt_event_id,
     sequence: activity.sequence,
     sessionId: activity.session_id,
+    submissionContext: activity.submission_context,
     submittedAt: formatOptionalTimestamp(activity.submitted_at, "Unknown"),
   };
 }

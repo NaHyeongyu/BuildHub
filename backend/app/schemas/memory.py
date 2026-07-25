@@ -36,6 +36,15 @@ class DraftOpenQuestion(BaseModel):
     question: str
     source_event_ids: list[str] = Field(default_factory=list)
     source_chunk_ids: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+
+
+class DraftRequirement(BaseModel):
+    requirement: str
+    reason: str | None = None
+    source_event_ids: list[str] = Field(default_factory=list)
+    source_chunk_ids: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0, le=1)
 
 
 class MemoryDraftDetails(BaseModel):
@@ -47,6 +56,7 @@ class MemoryDraftDetails(BaseModel):
     decisions: list[DraftDecision] = Field(default_factory=list)
     rejected_directions: list[DraftRejectedDirection] = Field(default_factory=list)
     open_questions: list[DraftOpenQuestion] = Field(default_factory=list)
+    requirements: list[DraftRequirement] = Field(default_factory=list)
     follow_ups: list[str] = Field(default_factory=list)
     next_steps: list[str] = Field(default_factory=list)
 
@@ -107,12 +117,23 @@ class ProjectMemoryRejectedDirection(BaseModel):
     source_memory_ids: list[str] = Field(default_factory=list)
 
 
+class ProjectMemorySupersededDecision(BaseModel):
+    decision: str
+    superseded_by: str
+    reason: str = ""
+    source_memory_ids: list[str] = Field(default_factory=list)
+
+
 class ProjectMemorySections(BaseModel):
     product_goal: str = ""
     current_direction: str = ""
     core_workflow: list[str] = Field(default_factory=list)
     important_decisions: list[ProjectMemoryDecision] = Field(default_factory=list)
+    requirements: list[str] = Field(default_factory=list)
     rejected_directions: list[ProjectMemoryRejectedDirection] = Field(default_factory=list)
+    superseded_decisions: list[ProjectMemorySupersededDecision] = Field(
+        default_factory=list
+    )
     technical_assumptions: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     instructions_for_future_ai_agents: list[str] = Field(default_factory=list)

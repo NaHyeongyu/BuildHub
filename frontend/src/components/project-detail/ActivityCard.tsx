@@ -1,7 +1,11 @@
 import { useMemo, useState } from "react";
 import { Share2, Trash2 } from "lucide-react";
 import { AiModelBadge } from "./AiModelBadge";
-import type { ActivityItem, PromptActivityItem } from "./types";
+import type {
+  ActivityItem,
+  PromptActivityItem,
+  PromptWorkGroup,
+} from "./types";
 import { useI18n } from "../../i18n/I18nProvider";
 
 const PROMPT_PREVIEW_LINES = 10;
@@ -169,6 +173,164 @@ export function PromptActivityCard({
         </div>
       </div>
     </article>
+  );
+}
+
+function promptWorkStatus(group: PromptWorkGroup) {
+  const latestPrompt = group.prompts[group.prompts.length - 1];
+  if (latestPrompt?.response || latestPrompt?.responseReceivedAt) {
+    return "completed";
+  }
+  return "inProgress";
+}
+
+export function PromptWorkGroupCard({
+  group,
+  isSelected,
+  onOpen,
+}: {
+  group: PromptWorkGroup;
+  isSelected: boolean;
+  onOpen: () => void;
+}) {
+  const { t } = useI18n();
+  const originalPrompt = group.prompts[0];
+  const latestPrompt = group.prompts[group.prompts.length - 1];
+  const filesChanged = group.prompts.reduce(
+    (total, prompt) => total + prompt.filesChanged,
+    0,
+  );
+  const status = promptWorkStatus(group);
+  const statusLabel =
+    status === "completed"
+      ? t("activity.workStatus.completed")
+      : t("activity.workStatus.inProgress");
+
+  return (
+    <article
+      aria-label={originalPrompt.prompt}
+      aria-pressed={isSelected}
+      className="bh-prompt-work-row"
+      data-active={isSelected}
+      data-status={status}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
+      <div className="bh-prompt-work-row-header">
+        <span className="bh-prompt-work-status">{statusLabel}</span>
+        <time>{latestPrompt.submittedAt}</time>
+      </div>
+      <PromptText expandable={false} text={originalPrompt.prompt} />
+      <div className="bh-prompt-row-meta">
+        <AiModelBadge className="is-compact" model={latestPrompt.model} />
+        <span className="bh-prompt-row-chip">
+          {t("activity.promptsCount", { count: group.prompts.length })}
+        </span>
+        <span className="bh-prompt-row-chip">
+          {t("activity.fileCount", { count: filesChanged })}
+        </span>
+      </div>
+    </article>
+  );
+}
+
+export function PromptWorkTimeline({
+  group,
+  onDeletePrompt,
+  onSelectPrompt,
+  onSharePrompt,
+  selectedActivity,
+}: {
+  group: PromptWorkGroup | null;
+  onDeletePrompt?: (activity: PromptActivityItem) => void;
+  onSelectPrompt: (activity: PromptActivityItem) => void;
+  onSharePrompt?: (activity: PromptActivityItem) => void;
+  selectedActivity: PromptActivityItem | null;
+}) {
+  const { t } = useI18n();
+  if (!group || !selectedActivity) {
+    return (
+      <PromptChangeDetail
+        activity={selectedActivity}
+        onDeletePrompt={onDeletePrompt}
+        onSharePrompt={onSharePrompt}
+      />
+    );
+  }
+
+  return (
+    <div className="bh-prompt-work-detail">
+      <section className="bh-prompt-work-timeline" aria-labelledby="prompt-work-title">
+        <div className="bh-prompt-work-title">
+          <div>
+            <span>{t("activity.workTimeline")}</span>
+            <h2 id="prompt-work-title">{group.prompts[0].prompt}</h2>
+          </div>
+          <strong>{t("activity.promptsCount", { count: group.prompts.length })}</strong>
+        </div>
+        <ol>
+          {group.prompts.map((prompt, index) => {
+            const hasLaterPrompt = index < group.prompts.length - 1;
+            const hasResponse = Boolean(prompt.response || prompt.responseReceivedAt);
+            const status = hasResponse
+              ? "completed"
+              : hasLaterPrompt
+                ? "interrupted"
+                : "inProgress";
+            const stepLabel =
+              index === 0
+                ? t("activity.originalRequest")
+                : prompt.submissionContext === "during_output"
+                  ? t("activity.savedDuringOutput")
+                  : t("activity.followUpRequest");
+            const statusLabel =
+              status === "completed"
+                ? t("activity.workStatus.completed")
+                : status === "interrupted"
+                  ? t("activity.workStatus.interrupted")
+                  : t("activity.workStatus.inProgress");
+
+            return (
+              <li data-status={status} key={prompt.id}>
+                <span className="bh-prompt-work-marker" aria-hidden="true" />
+                <button
+                  aria-pressed={selectedActivity.id === prompt.id}
+                  className="bh-prompt-work-step"
+                  data-active={selectedActivity.id === prompt.id}
+                  onClick={() => onSelectPrompt(prompt)}
+                  type="button"
+                >
+                  <div className="bh-prompt-work-step-header">
+                    <strong>{stepLabel}</strong>
+                    <span>{statusLabel}</span>
+                  </div>
+                  <p>{prompt.prompt}</p>
+                  <div className="bh-prompt-work-step-meta">
+                    <time>{prompt.submittedAt}</time>
+                    {hasResponse ? <span>{t("activity.responseSaved")}</span> : null}
+                    {prompt.filesChanged > 0 ? (
+                      <span>{t("activity.fileCount", { count: prompt.filesChanged })}</span>
+                    ) : null}
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
+      <PromptChangeDetail
+        activity={selectedActivity}
+        onDeletePrompt={onDeletePrompt}
+        onSharePrompt={onSharePrompt}
+      />
+    </div>
   );
 }
 

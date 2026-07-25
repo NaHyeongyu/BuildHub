@@ -130,9 +130,12 @@
   }
 
   .bh-prompt-change-detail,
+  .bh-prompt-work-detail,
   .bh-session-detail {
     position: static;
+    height: auto;
     max-height: none;
+    overflow: visible;
   }
 
   .bh-prompt-row,

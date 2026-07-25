@@ -15,8 +15,11 @@ import {
   ActivityCard,
   PromptActivityCard,
   PromptChangeDetail,
+  PromptWorkGroupCard,
+  PromptWorkTimeline,
 } from "./ActivityCard";
 import {
+  buildPromptWorkGroups,
   workTypeCounts,
   workTypeForFiles,
   type WorkTypeFilter,
@@ -27,6 +30,7 @@ import type {
   ActivityItem,
   ProjectDetailData,
   PromptActivityItem,
+  PromptWorkGroup,
 } from "./types";
 import { WorkTypeFilterControl } from "./WorkTypeFilterControl";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -436,6 +440,13 @@ export function ActivityPanel({
       (item) => workTypeForFiles(item.activity.filesChanged) === activityWorkTypeFilter,
     );
   }, [activityWorkTypeFilter, searchMatchedActivityFeedItems, view]);
+  const promptWorkGroups = useMemo<PromptWorkGroup[]>(() => {
+    return buildPromptWorkGroups(
+      filteredActivityFeedItems.flatMap((item) =>
+        item.kind === "prompt" ? [item.activity] : [],
+      ),
+    );
+  }, [filteredActivityFeedItems]);
   const selectedFeedItem =
     filteredActivityFeedItems.find((item) =>
       item.kind === "prompt"
@@ -444,14 +455,27 @@ export function ActivityPanel({
     ) ??
     filteredActivityFeedItems[0] ??
     null;
+  const selectedPromptWorkGroup =
+    promptWorkGroups.find((group) =>
+      group.prompts.some((prompt) => prompt.id === selectedPromptId),
+    ) ??
+    (selectedFeedItem?.kind === "prompt"
+      ? promptWorkGroups.find((group) =>
+          group.prompts.some((prompt) => prompt.id === selectedFeedItem.activity.id),
+        )
+      : null) ??
+    promptWorkGroups[0] ??
+    null;
   const selectedPrompt =
-    selectedFeedItem?.kind === "prompt" ? selectedFeedItem.activity : null;
+    selectedPromptWorkGroup?.prompts.find((prompt) => prompt.id === selectedPromptId) ??
+    selectedPromptWorkGroup?.prompts[selectedPromptWorkGroup.prompts.length - 1] ??
+    null;
   const selectedSession =
     selectedFeedItem?.kind === "session" ? selectedFeedItem.activity : null;
   const selectedSessionPrompts = selectedSession ? sessionPrompts : [];
   const promptTargetForCurrentSelection =
     selectedFeedItem?.kind === "prompt"
-      ? selectedFeedItem.activity
+      ? selectedPrompt
       : selectedSessionPrompts.find(
           (activity) => activity.id === selectedSessionPromptId,
         ) ??
@@ -716,7 +740,7 @@ export function ActivityPanel({
           onClick={() => updateActivityView(activityView)}
           type="button"
         >
-          {activityView === "prompts" ? t("activity.byPrompt") : t("activity.bySession")}
+          {activityView === "prompts" ? t("activity.byWork") : t("activity.bySession")}
         </button>
       ))}
     </div>
@@ -817,40 +841,41 @@ export function ActivityPanel({
               <div className="bh-prompt-search-empty">{t("activity.loadingPrompts")}</div>
             ) : filteredActivityFeedItems.length > 0 ? (
               <div className="bh-prompt-list">
-                {filteredActivityFeedItems.map((item) => {
-                  if (item.kind === "prompt") {
-                    return (
-                      <PromptActivityCard
-                        activity={item.activity}
-                        isSelected={item.key === selectedFeedItem?.key}
-                        key={item.key}
-                        onOpen={() =>
-                          updateActivityNavigation({
-                            selectedPromptId: item.activity.id,
-                            selectedSessionId: null,
-                            selectedSessionPromptId: null,
-                          })
-                        }
-                      />
-                    );
-                  }
-
-                  return (
-                    <ActivityCard
-                      activity={item.activity}
-                      isSelected={item.key === selectedFeedItem?.key}
-                      key={item.key}
-                      onOpen={() => {
-                        updateActivityNavigation({
-                          selectedPromptId: null,
-                          selectedSessionId: item.activity.id,
-                          selectedSessionPromptId: null,
-                        });
-                        setSessionConversationSearchInput("");
-                      }}
-                    />
-                  );
-                })}
+                {view === "prompts"
+                  ? promptWorkGroups.map((group) => {
+                      const latestPrompt = group.prompts[group.prompts.length - 1];
+                      return (
+                        <PromptWorkGroupCard
+                          group={group}
+                          isSelected={group.id === selectedPromptWorkGroup?.id}
+                          key={group.id}
+                          onOpen={() =>
+                            updateActivityNavigation({
+                              selectedPromptId: latestPrompt.id,
+                              selectedSessionId: null,
+                              selectedSessionPromptId: null,
+                            })
+                          }
+                        />
+                      );
+                    })
+                  : filteredActivityFeedItems.map((item) =>
+                      item.kind === "session" ? (
+                        <ActivityCard
+                          activity={item.activity}
+                          isSelected={item.key === selectedFeedItem?.key}
+                          key={item.key}
+                          onOpen={() => {
+                            updateActivityNavigation({
+                              selectedPromptId: null,
+                              selectedSessionId: item.activity.id,
+                              selectedSessionPromptId: null,
+                            });
+                            setSessionConversationSearchInput("");
+                          }}
+                        />
+                      ) : null,
+                    )}
               </div>
             ) : !promptActivityError ? (
               <div className="bh-prompt-search-empty">
@@ -1005,11 +1030,18 @@ export function ActivityPanel({
           </>
         ) : (
           <>
-            <PromptChangeDetail
-              activity={selectedPrompt}
+            <PromptWorkTimeline
+              group={selectedPromptWorkGroup}
               onDeletePrompt={onDeletePromptActivity ? (activity) =>
                 openDeletionDialog({ activity, kind: "prompt" }) : undefined}
+              onSelectPrompt={(activity) =>
+                updateActivityNavigation({
+                  selectedPromptId: activity.id,
+                  selectedSessionId: null,
+                  selectedSessionPromptId: null,
+                })}
               onSharePrompt={onSharePrompt}
+              selectedActivity={selectedPrompt}
             />
           </>
         )}

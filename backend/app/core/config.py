@@ -455,7 +455,7 @@ class Settings:
                 (
                     "PROMTY_MEMORY_WORKER_CHUNK_CONCURRENCY",
                 ),
-                2,
+                1,
             ),
         )
     )

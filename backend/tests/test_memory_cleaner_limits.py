@@ -32,6 +32,15 @@ def _draft_with_large_semantic_lists() -> dict:
                 {"question": f"Question {index}", "source_event_ids": ids}
                 for index in range(MAX_SEMANTIC_LIST_ITEMS + 20)
             ],
+            "requirements": [
+                {
+                    "confidence": 0.9,
+                    "reason": "Acceptance condition",
+                    "requirement": f"Requirement {index}",
+                    "source_event_ids": ids,
+                }
+                for index in range(MAX_SEMANTIC_LIST_ITEMS + 20)
+            ],
             "tasks": [f"Task {index}" for index in range(MAX_SEMANTIC_LIST_ITEMS + 20)],
         },
         "evidence": {
@@ -58,6 +67,7 @@ def test_draft_cleaner_hard_caps_semantic_lists_and_source_ids() -> None:
     assert len(draft["details"]["tasks"]) == MAX_SEMANTIC_LIST_ITEMS
     assert len(draft["details"]["decisions"]) == MAX_SEMANTIC_LIST_ITEMS
     assert len(draft["details"]["open_questions"]) == MAX_SEMANTIC_LIST_ITEMS
+    assert len(draft["details"]["requirements"]) == MAX_SEMANTIC_LIST_ITEMS
     assert len(draft["evidence"]["source_event_ids"]) == MAX_SOURCE_IDS
     assert len(draft["evidence"]["source_chunk_ids"]) == MAX_SOURCE_IDS
     assert all(len(value) <= MAX_SOURCE_ID_CHARS for value in draft["evidence"]["source_event_ids"])
@@ -111,7 +121,17 @@ def test_project_cleaner_caps_utf8_body_and_ids_without_truncating_sections() ->
                 "instructions_for_future_ai_agents": items,
                 "open_questions": items,
                 "product_goal": product_goal,
+                "requirements": items,
                 "rejected_directions": [],
+                "superseded_decisions": [
+                    {
+                        "decision": f"Old decision {index}",
+                        "superseded_by": f"New decision {index}",
+                        "reason": "Newer approved direction",
+                        "source_memory_ids": ids,
+                    }
+                    for index in range(MAX_SEMANTIC_LIST_ITEMS + 20)
+                ],
                 "technical_assumptions": items,
             },
             "source_memory_ids": ids,
@@ -123,6 +143,11 @@ def test_project_cleaner_caps_utf8_body_and_ids_without_truncating_sections() ->
     assert len(cleaned["body_markdown"].encode("utf-8")) <= PROJECT_MEMORY_BODY_MAX_BYTES
     assert len(cleaned["sections"]["core_workflow"]) == MAX_SEMANTIC_LIST_ITEMS
     assert len(cleaned["sections"]["important_decisions"]) == MAX_SEMANTIC_LIST_ITEMS
+    assert len(cleaned["sections"]["requirements"]) == MAX_SEMANTIC_LIST_ITEMS
+    assert (
+        len(cleaned["sections"]["superseded_decisions"])
+        == MAX_SEMANTIC_LIST_ITEMS
+    )
     assert cleaned["sections"]["current_direction"] == current_direction
     assert cleaned["sections"]["product_goal"] == product_goal
     assert cleaned["sections"]["instructions_for_future_ai_agents"] == []
@@ -188,6 +213,12 @@ def test_draft_payload_metadata_stores_generation_summary_not_full_response(
     draft_metadata = payloads[0][1]
     assert "overall_uncertainties" not in draft_metadata
     assert draft_metadata["overall_uncertainty_count"] == 7
+    assert draft_metadata["knowledge_projection"]["schema_version"] == 1
+    assert {node["kind"] for node in draft_metadata["knowledge_projection"]["nodes"]} == {
+        "decision",
+        "open_question",
+        "requirement",
+    }
 
 
 def test_draft_payload_keeps_complete_generated_detail() -> None:

@@ -333,6 +333,8 @@ export type ProjectDetailApiResponse = {
     total_artifacts: number;
   };
   prompt_activities?: Array<{
+    continuation_of?: string | null;
+    delivery_mode?: "unknown" | "queued" | "interrupt" | null;
     file_changes?: Array<{
       additions: number | null;
       binary?: boolean;
@@ -358,8 +360,10 @@ export type ProjectDetailApiResponse = {
     response_source?: string | null;
     response_storage_limit?: number | null;
     response_truncated?: boolean;
+    root_prompt_event_id?: string | null;
     sequence: number;
     session_id: string;
+    submission_context?: "idle" | "during_output" | null;
     submitted_at: string | null;
   }>;
   files?: FileTreeNode[];

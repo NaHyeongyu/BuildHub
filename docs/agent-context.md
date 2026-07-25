@@ -31,7 +31,8 @@ It publishes two read-only tools:
 
 - `get_project_context` returns the latest approved Project Memory as Markdown plus structured
   JSON. It accepts optional `cwd`, `project_id`, and `format` arguments.
-- `search_project_context` searches approved memory nodes and their safe file references. It
+- `search_project_context` searches approved decisions, requirements, open
+  questions, discarded directions, memory nodes, and safe file references. It
   requires `query` and accepts optional `cwd`, `project_id`, `limit` (1-20), and `format`
   arguments. Results include recorded relationship provenance so an agent can distinguish saved
   evidence from an inferred relationship.
@@ -45,3 +46,7 @@ ownership is checked before private memory is returned.
 `GET /api/agent/projects/{project_id}/context/search` uses the same owner-scoped collector token
 boundary. It never returns raw prompts, model responses, patch bodies, or unreviewed memory. File
 nodes expose only paths and safe change statistics derived from the approved Project Memory.
+Semantic nodes become agent-visible only after their containing Project Memory
+is verified or edited by the user. Markdown results prioritize decisions and
+requirements and include status, evidence type, stable IDs, and relationship
+provenance.

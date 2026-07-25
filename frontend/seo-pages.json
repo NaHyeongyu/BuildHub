@@ -1,0 +1,183 @@
+[
+  {
+    "route": "landing",
+    "path": "/",
+    "index": true,
+    "title": "Promty — Project Memory for AI-Assisted Development",
+    "description": "Promty captures completed AI coding work and compiles it into durable, reviewable Project Memory for the next human or coding agent.",
+    "eyebrow": "PROJECT MEMORY FOR AI-ASSISTED DEVELOPMENT",
+    "heading": "Every AI session should start where the last one ended.",
+    "summary": "Capture completed work, keep the reasoning that shaped it, and give the next human or coding agent current project context.",
+    "highlights": [
+      "Capture completed work from repositories you explicitly connect.",
+      "Review decisions, rejected paths, open questions, and next steps.",
+      "Continue in Codex CLI, Claude Code, or another agent without starting over."
+    ],
+    "image": "/marketing/promty-product-memory.png"
+  },
+  {
+    "route": "about",
+    "path": "/about",
+    "index": true,
+    "title": "About Promty — Keep AI project context moving",
+    "description": "Promty turns completed AI coding work into reviewable Project Memory, so every human and AI agent can continue with the right decisions and next steps.",
+    "eyebrow": "WHY PROMTY",
+    "heading": "Explain it once. Keep moving with any AI.",
+    "summary": "Promty preserves the decisions, failed paths, and next steps that disappear between AI coding sessions.",
+    "highlights": [
+      "Work normally with the coding tools you already use.",
+      "Review what becomes durable Project Memory.",
+      "Hand current context to the next person or read-only agent."
+    ],
+    "image": "/marketing/promty-product-overview.png"
+  },
+  {
+    "route": "product",
+    "path": "/product",
+    "index": true,
+    "title": "Promty Product — Project Memory for AI Coding Agents",
+    "description": "See how Promty captures AI coding activity, compiles reviewable Project Memory, and delivers current context through CLI and read-only MCP access.",
+    "eyebrow": "PROMTY PRODUCT",
+    "heading": "The memory layer between your project and every agent.",
+    "summary": "Promty turns completed AI work into a compact model of current direction, important decisions, rejected approaches, assumptions, and open questions.",
+    "highlights": [
+      "Repository-scoped capture from Codex CLI and Claude Code.",
+      "Human-reviewed memory with links to supporting work.",
+      "Owner-scoped context through the Promty CLI and read-only MCP."
+    ],
+    "image": "/marketing/promty-product-memory.png"
+  },
+  {
+    "route": "collector-docs",
+    "path": "/docs/collector",
+    "index": true,
+    "title": "Connect Codex CLI and Claude Code to Promty",
+    "description": "Install the Promty Collector, connect an explicit repository, verify captured sessions, and make approved Project Memory available to future coding agents.",
+    "eyebrow": "COLLECTOR DOCUMENTATION",
+    "heading": "Connect your AI coding tool.",
+    "summary": "Follow the setup guide for Codex CLI or Claude Code, authorize the Collector, test the connection, and review Project Memory before sharing it with another agent.",
+    "highlights": [
+      "One repository-scoped installation command.",
+      "User-controlled browser authorization and revocable tokens.",
+      "Clear verification, privacy, and troubleshooting steps."
+    ],
+    "image": "/marketing/promty-product-overview.png"
+  },
+  {
+    "route": "legal-privacy",
+    "path": "/privacy",
+    "index": true,
+    "title": "Privacy Notice · Promty",
+    "description": "Learn what Promty collects, how Project Memory uses AI processing, how information is protected, and how to exercise privacy and deletion choices.",
+    "eyebrow": "LEGAL",
+    "heading": "Privacy Notice",
+    "summary": "Promty explains what information is collected, how it is used, when external AI processing occurs, and the controls available to users.",
+    "highlights": [
+      "Projects and prompt flows are private by default.",
+      "External AI generation requires a separate user choice.",
+      "Users can revoke tokens, delete projects, and delete their account."
+    ],
+    "image": "/marketing/promty-product-memory.png"
+  },
+  {
+    "route": "legal-terms",
+    "path": "/terms",
+    "index": true,
+    "title": "Terms of Service · Promty",
+    "description": "Read the terms that govern professional and business use of Promty, including accounts, user content, AI-generated material, and service responsibilities.",
+    "eyebrow": "LEGAL",
+    "heading": "Terms of Service",
+    "summary": "These terms cover account responsibilities, submitted content, AI-generated material, acceptable use, third-party services, and service limitations.",
+    "highlights": [
+      "You retain ownership of content you submit.",
+      "AI-generated material requires appropriate human review.",
+      "Account and Collector credentials must be kept secure."
+    ],
+    "image": "/marketing/promty-product-memory.png"
+  },
+  {
+    "route": "legal-acceptable-use",
+    "path": "/acceptable-use",
+    "index": true,
+    "title": "Acceptable Use Policy · Promty",
+    "description": "Review the safety, authorization, privacy, security, and content rules that apply when using Promty for AI-assisted software work.",
+    "eyebrow": "TRUST & SAFETY",
+    "heading": "Acceptable Use Policy",
+    "summary": "Promty supports legitimate software work and requires users to protect people, data, repositories, credentials, and connected systems.",
+    "highlights": [
+      "Use only data, repositories, and systems you are authorized to access.",
+      "Do not upload secrets or confidential material without authorization.",
+      "Review generated output before using it where errors could cause harm."
+    ],
+    "image": "/marketing/promty-product-memory.png"
+  },
+  {
+    "route": "legal-security",
+    "path": "/security",
+    "index": true,
+    "title": "Security and Vulnerability Reporting · Promty",
+    "description": "Report a Promty security vulnerability privately and review the guidelines for safe, good-faith security research.",
+    "eyebrow": "SECURITY",
+    "heading": "Report a vulnerability",
+    "summary": "Send security reports privately with clear reproduction steps and follow the safe-research guidelines when testing Promty.",
+    "highlights": [
+      "Report vulnerabilities privately to security@promty.org.",
+      "Use only accounts and data you control.",
+      "Avoid destructive testing, disruption, and high-volume scanning."
+    ],
+    "image": "/marketing/promty-product-memory.png"
+  },
+  {
+    "route": "collector-docs-ai",
+    "path": "/docs/collector/ai",
+    "canonicalPath": "/docs/collector",
+    "index": false,
+    "title": "AI Setup Instructions · Promty",
+    "description": "Agent-readable instructions for connecting a supported AI coding tool to the Promty Collector.",
+    "eyebrow": "AGENT-READABLE SETUP",
+    "heading": "Let your AI connect Promty.",
+    "summary": "This machine-oriented companion to the Collector guide provides a bounded setup contract for supported coding agents.",
+    "highlights": [
+      "Use one explicit setup command.",
+      "Keep browser authorization under user control.",
+      "Verify successful activation before reporting completion."
+    ],
+    "image": "/marketing/promty-product-overview.png"
+  },
+  {
+    "route": "workspace",
+    "path": "/app",
+    "index": false,
+    "title": "Workspace · Promty",
+    "description": "Sign in to manage connected projects, review captured activity, and maintain Project Memory.",
+    "eyebrow": "PROMTY WORKSPACE",
+    "heading": "Your project context workspace.",
+    "summary": "Sign in to manage private project activity and reviewed Project Memory.",
+    "highlights": [],
+    "image": "/marketing/promty-product-memory.png"
+  },
+  {
+    "route": "admin",
+    "path": "/admin",
+    "index": false,
+    "title": "Administration · Promty",
+    "description": "Restricted Promty administration area.",
+    "eyebrow": "RESTRICTED",
+    "heading": "Promty administration",
+    "summary": "This area requires an authorized Promty administrator account.",
+    "highlights": [],
+    "image": "/marketing/promty-product-memory.png"
+  },
+  {
+    "route": "cli-login",
+    "path": "/cli/login",
+    "index": false,
+    "title": "Collector Authorization · Promty",
+    "description": "Authorize a local Promty Collector connection.",
+    "eyebrow": "COLLECTOR AUTHORIZATION",
+    "heading": "Connect Promty Collector",
+    "summary": "Review and authorize the Collector connection initiated from your local development environment.",
+    "highlights": [],
+    "image": "/marketing/promty-product-overview.png"
+  }
+]

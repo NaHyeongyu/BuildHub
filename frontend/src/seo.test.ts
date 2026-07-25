@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import indexHtml from "../index.html?raw";
+import seoPages from "../seo-pages.json";
 import robotsTxt from "../public/robots.txt?raw";
 import siteManifest from "../public/site.webmanifest?raw";
 import sitemapXml from "../public/sitemap.xml?raw";
+import generatorSource from "../scripts/generate-static-seo.mjs?raw";
+import routeSeoSource from "./seo.ts?raw";
 
 const productionOrigin = "https://promty.org";
 const description =
@@ -37,6 +40,36 @@ describe("static search metadata", () => {
     expect(sitemapXml).toContain(`<loc>${productionOrigin}/about</loc>`);
     expect(sitemapXml).not.toContain(`${productionOrigin}/app`);
     expect(sitemapXml).not.toContain(`${productionOrigin}/admin`);
+  });
+
+  it("keeps every indexed route in the sitemap with unique metadata", () => {
+    const indexedPages = seoPages.filter((page) => page.index);
+    const privatePages = seoPages.filter((page) => !page.index);
+
+    expect(new Set(seoPages.map((page) => page.path)).size).toBe(seoPages.length);
+    expect(new Set(indexedPages.map((page) => page.title)).size).toBe(
+      indexedPages.length,
+    );
+    expect(new Set(indexedPages.map((page) => page.description)).size).toBe(
+      indexedPages.length,
+    );
+
+    for (const page of indexedPages) {
+      expect(sitemapXml).toContain(
+        `<loc>${productionOrigin}${page.path === "/" ? "/" : page.path}</loc>`,
+      );
+    }
+    for (const page of privatePages) {
+      expect(sitemapXml).not.toContain(`<loc>${productionOrigin}${page.path}</loc>`);
+    }
+  });
+
+  it("generates route-specific source HTML and updates metadata after SPA navigation", () => {
+    expect(generatorSource).toContain('path.join(distDirectory, page.path.slice(1), "index.html")');
+    expect(generatorSource).toContain('"application/ld+json"');
+    expect(generatorSource).toContain("noindex, nofollow, noarchive");
+    expect(routeSeoSource).toContain("export function useRouteSeo");
+    expect(routeSeoSource).toContain("page.canonicalPath ?? page.path");
   });
 
   it("describes the installed site without claiming offline support", () => {

@@ -33,8 +33,45 @@ const contextGraphFixture = {
       source: "memory:project",
       target: "file:context-graph",
     },
+    {
+      id: "edge-decision-source",
+      inferred: true,
+      kind: "derived_from",
+      source: "knowledge:memory:decision",
+      target: "prompt:one",
+    },
+    {
+      id: "edge-requirement-source",
+      inferred: true,
+      kind: "derived_from",
+      source: "knowledge:memory:requirement",
+      target: "prompt:one",
+    },
+    {
+      id: "edge-decision-memory",
+      inferred: true,
+      kind: "captured_in",
+      source: "knowledge:memory:decision",
+      target: "memory:project",
+    },
+    {
+      id: "edge-question-memory",
+      inferred: true,
+      kind: "captured_in",
+      source: "knowledge:memory:question",
+      target: "memory:project",
+    },
   ],
-  facets: { file: 2, memory: 1, prompt: 1, response: 1 },
+  facets: {
+    brainstorm: 1,
+    decision: 1,
+    file: 2,
+    memory: 1,
+    open_question: 1,
+    prompt: 1,
+    requirement: 1,
+    response: 1,
+  },
   nodes: [
     {
       agent_visible: false,
@@ -95,6 +132,66 @@ const contextGraphFixture = {
       session_id: null,
       summary: "Keep provenance and user review attached to reusable project context.",
     },
+    {
+      agent_visible: false,
+      id: "knowledge:memory:decision",
+      kind: "decision",
+      label: "Use output-derived knowledge nodes",
+      metadata: {
+        confidence: 0.94,
+        review_state: "confirmed",
+        status: "active",
+      },
+      occurred_at: "2026-07-22T01:05:00Z",
+      sequence: null,
+      session_id: "4eea979c-c94b-44a4-ad1f-d9344bb62da5",
+      summary: "Keep prompts and files as source evidence rather than map nodes.",
+    },
+    {
+      agent_visible: false,
+      id: "knowledge:memory:requirement",
+      kind: "requirement",
+      label: "Keep the map minimal",
+      metadata: {
+        confidence: 0.91,
+        review_state: "unreviewed",
+        status: "active",
+      },
+      occurred_at: "2026-07-22T01:05:00Z",
+      sequence: null,
+      session_id: "4eea979c-c94b-44a4-ad1f-d9344bb62da5",
+      summary: "Move concrete evidence and metadata into the detail panel.",
+    },
+    {
+      agent_visible: false,
+      id: "knowledge:memory:idea",
+      kind: "brainstorm",
+      label: "Use a five-lane graph",
+      metadata: {
+        confidence: 0.82,
+        review_state: "rejected",
+        status: "discarded",
+      },
+      occurred_at: "2026-07-22T01:04:00Z",
+      sequence: null,
+      session_id: "4eea979c-c94b-44a4-ad1f-d9344bb62da5",
+      summary: "The previous map exposed too much low-level activity.",
+    },
+    {
+      agent_visible: false,
+      id: "knowledge:memory:question",
+      kind: "open_question",
+      label: "When should related nodes merge?",
+      metadata: {
+        confidence: 0.7,
+        review_state: "unreviewed",
+        status: "open",
+      },
+      occurred_at: "2026-07-22T01:06:00Z",
+      sequence: null,
+      session_id: "4eea979c-c94b-44a4-ad1f-d9344bb62da5",
+      summary: null,
+    },
   ],
   query: null,
   safety_notice: "Only reviewed Project Memory is available to AI agents.",
@@ -127,15 +224,16 @@ test("context graph stays node-based and usable from desktop to mobile", async (
   try {
     await page.goto(`/app?project=${project.id}&tab=memory`);
     await expect(page.getByRole("heading", { name: repositoryName })).toBeVisible();
-    await page.getByRole("tab", { name: "Context graph" }).click();
+    await page.getByRole("tab", { name: "Knowledge graph" }).click();
 
     const desktopGraph = page.getByTestId("context-graph-desktop");
     await expect(desktopGraph).toBeVisible();
-    await expect(desktopGraph.locator(".context-graph-node")).toHaveCount(5);
-    await expect(desktopGraph.locator(".context-graph-edge")).toHaveCount(4);
-    await expect(desktopGraph.locator(".context-graph-node-port")).toHaveCount(10);
-    await expect(page.locator(".context-graph-basis-legend")).toContainText("Recorded");
-    await expect(page.locator(".context-graph-basis-legend")).toContainText("Inferred");
+    await expect(desktopGraph.locator(".context-graph-node")).toHaveCount(4);
+    await expect(desktopGraph.locator(".context-graph-plane")).toHaveCount(3);
+    await expect(desktopGraph.locator(".context-graph-edge").first()).toBeVisible();
+    await expect(page.locator(".context-graph-evidence-list")).toContainText(
+      "Implemented the context graph and evidence trail",
+    );
 
     if (process.env.PROMTY_CAPTURE_CONTEXT_GRAPH === "1") {
       await page.screenshot({
@@ -146,11 +244,9 @@ test("context graph stays node-based and usable from desktop to mobile", async (
     }
 
     await page.setViewportSize({ height: 844, width: 390 });
-    await expect(desktopGraph).toBeHidden();
-    const mobileGraph = page.getByTestId("context-graph-mobile");
-    await expect(mobileGraph).toBeVisible();
-    await expect(mobileGraph.locator(".context-graph-mobile-anchor .context-graph-node")).toHaveCount(1);
-    await expect(mobileGraph.locator(".context-graph-mobile-connections > li")).toHaveCount(2);
+    await expect(desktopGraph).toBeVisible();
+    await expect(desktopGraph.locator(".context-graph-node")).toHaveCount(4);
+    await expect(page.locator(".context-graph-inspector")).toBeVisible();
 
     const overflow = await page.evaluate(() =>
       Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) -

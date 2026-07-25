@@ -5,6 +5,7 @@ import {
   navigateToAppUrl,
   type AppRoute,
 } from "./routing";
+import { useRouteSeo } from "./seo";
 import "./App.css";
 
 const loadAdminApp = () => import("./AdminApp");
@@ -80,6 +81,7 @@ function App() {
   const [route, setRoute] = useState(() =>
     appRouteFromLocation(window.location.pathname, window.location.search),
   );
+  useRouteSeo(route);
 
   useEffect(() => {
     const handleLocationChange = (event: PopStateEvent) => {

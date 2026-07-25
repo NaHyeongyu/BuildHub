@@ -2,7 +2,12 @@ from types import SimpleNamespace
 
 from app.services.memory.cleaners import clean_memory_drafts_response
 from app.services.memory.prompts import MAX_MEMORY_DRAFTS
-from app.services.memory.windows import events_have_generation_inputs
+from app.services.memory.windows import (
+    MEMORY_SLICE_KIND_IMPLEMENTATION,
+    MEMORY_SLICE_KIND_REASONING,
+    events_have_generation_inputs,
+    generation_input_kind,
+)
 
 
 def _raw_draft(index: int) -> dict:
@@ -99,7 +104,7 @@ def test_memory_draft_cleaner_preserves_detail_item_counts() -> None:
     assert len(details["open_questions"]) == item_count
 
 
-def test_memory_generation_inputs_require_response_and_file_marker_after_latest_prompt() -> None:
+def test_memory_generation_inputs_classify_implementation_and_reasoning_after_latest_prompt() -> None:
     def event(
         event_type: str,
         sequence: int,
@@ -108,9 +113,12 @@ def test_memory_generation_inputs_require_response_and_file_marker_after_latest_
         return SimpleNamespace(event_type=event_type, payload=payload or {}, sequence=sequence)
 
     assert not events_have_generation_inputs([event("PromptSubmitted", 1)])
-    assert not events_have_generation_inputs(
-        [event("PromptSubmitted", 1), event("ResponseReceived", 2, {"response": "done"})]
-    )
+    reasoning_events = [
+        event("PromptSubmitted", 1),
+        event("ResponseReceived", 2, {"response": "done"}),
+    ]
+    assert events_have_generation_inputs(reasoning_events)
+    assert generation_input_kind(reasoning_events) == MEMORY_SLICE_KIND_REASONING
     assert not events_have_generation_inputs(
         [
             event("PromptSubmitted", 1),
@@ -118,13 +126,13 @@ def test_memory_generation_inputs_require_response_and_file_marker_after_latest_
             event("FilesChanged", 3),
         ]
     )
-    assert events_have_generation_inputs(
-        [
-            event("PromptSubmitted", 1),
-            event("ResponseReceived", 2, {"response": "done"}),
-            event("FilesChanged", 3),
-        ]
-    )
+    implementation_events = [
+        event("PromptSubmitted", 1),
+        event("ResponseReceived", 2, {"response": "done"}),
+        event("FilesChanged", 3),
+    ]
+    assert events_have_generation_inputs(implementation_events)
+    assert generation_input_kind(implementation_events) == MEMORY_SLICE_KIND_IMPLEMENTATION
     assert not events_have_generation_inputs(
         [
             event("PromptSubmitted", 1),

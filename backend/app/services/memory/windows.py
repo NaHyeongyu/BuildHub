@@ -18,6 +18,10 @@ from app.services.memory.context import payload as event_payload
 from app.services.memory.context import string_or_none
 
 
+MEMORY_SLICE_KIND_IMPLEMENTATION = "implementation"
+MEMORY_SLICE_KIND_REASONING = "reasoning"
+
+
 def memory_slice_event_max_rows() -> int:
     return max(settings.memory_slice_event_max_rows, 2)
 
@@ -219,7 +223,7 @@ def _event_has_response_text(event: Any) -> bool:
     return string_or_none(_event_payload_value(event).get("response")) is not None
 
 
-def events_have_generation_inputs(events: list[Any]) -> bool:
+def generation_input_kind(events: list[Any]) -> str | None:
     prompt_sequences = [
         sequence
         for event in events
@@ -227,7 +231,7 @@ def events_have_generation_inputs(events: list[Any]) -> bool:
         and isinstance((sequence := _event_sequence_value(event)), int)
     ]
     if not prompt_sequences:
-        return False
+        return None
 
     latest_prompt_sequence = max(prompt_sequences)
     events_after_prompt = [
@@ -236,9 +240,15 @@ def events_have_generation_inputs(events: list[Any]) -> bool:
         if isinstance((sequence := _event_sequence_value(event)), int)
         and sequence > latest_prompt_sequence
     ]
-    return any(_event_has_response_text(event) for event in events_after_prompt) and any(
-        _event_type_value(event) == "FilesChanged" for event in events_after_prompt
-    )
+    if not any(_event_has_response_text(event) for event in events_after_prompt):
+        return None
+    if any(_event_type_value(event) == "FilesChanged" for event in events_after_prompt):
+        return MEMORY_SLICE_KIND_IMPLEMENTATION
+    return MEMORY_SLICE_KIND_REASONING
+
+
+def events_have_generation_inputs(events: list[Any]) -> bool:
+    return generation_input_kind(events) is not None
 
 
 def _events_for_memory_window(
@@ -313,13 +323,13 @@ def _bounded_memory_window_events(
     return events, last_sequence if has_more else through_sequence
 
 
-def _window_has_generation_inputs(
+def _window_generation_input_kind(
     db: DBSession,
     session: Session,
     *,
     latest_prompt_sequence: int,
     through_sequence: int,
-) -> bool:
+) -> str | None:
     response_original_length = cast(
         Event.payload["response_original_length"].astext,
         Integer,
@@ -350,7 +360,13 @@ def _window_has_generation_inputs(
     has_response, has_files = db.execute(
         select(response_query.exists(), files_query.exists())
     ).one()
-    return bool(has_response and has_files)
+    if not has_response:
+        return None
+    return (
+        MEMORY_SLICE_KIND_IMPLEMENTATION
+        if has_files
+        else MEMORY_SLICE_KIND_REASONING
+    )
 
 
 def _prompt_events_after_sequence(
@@ -395,6 +411,7 @@ def _window_result(
     *,
     context_prompt: Event | None,
     materialization_end_sequence: int,
+    memory_slice_kind: str,
     reason: str,
     start_sequence: int,
 ) -> dict[str, Any] | None:
@@ -421,6 +438,7 @@ def _window_result(
         "event_row_limit": memory_slice_event_max_rows(),
         "events": window_events,
         "materialization_end_sequence": materialization_end_sequence,
+        "memory_slice_kind": memory_slice_kind,
         "reason": reason,
         "selected_prompts": selected_prompts,
         "start_sequence": start_sequence,
@@ -451,6 +469,7 @@ def due_memory_window(
             session,
             context_prompt=context_prompt,
             materialization_end_sequence=continuation_end_sequence,
+            memory_slice_kind="continuation",
             reason="event_count_continuation",
             start_sequence=after_sequence + 1,
         )
@@ -491,6 +510,7 @@ def due_memory_window(
                     through_sequence=after_sequence,
                 ),
                 materialization_end_sequence=inferred_end_sequence,
+                memory_slice_kind="continuation",
                 reason="event_count_continuation",
                 start_sequence=after_sequence + 1,
             )
@@ -508,18 +528,20 @@ def due_memory_window(
             if latest_event is None or latest_event.sequence <= selected_prompts[-1].sequence:
                 return None
             end_sequence = latest_event.sequence
-        if not _window_has_generation_inputs(
+        memory_slice_kind = _window_generation_input_kind(
             db,
             session,
             latest_prompt_sequence=selected_prompts[-1].sequence,
             through_sequence=end_sequence,
-        ):
+        )
+        if memory_slice_kind is None:
             return None
         return _window_result(
             db,
             session,
             context_prompt=selected_prompts[-1],
             materialization_end_sequence=end_sequence,
+            memory_slice_kind=memory_slice_kind,
             reason="prompt_count",
             start_sequence=selected_prompts[0].sequence,
         )
@@ -528,18 +550,20 @@ def due_memory_window(
         latest_event = latest_session_event(db, session)
         if latest_event is None:
             return None
-        if not _window_has_generation_inputs(
+        memory_slice_kind = _window_generation_input_kind(
             db,
             session,
             latest_prompt_sequence=prompts[-1].sequence,
             through_sequence=latest_event.sequence,
-        ):
+        )
+        if memory_slice_kind is None:
             return None
         return _window_result(
             db,
             session,
             context_prompt=prompts[-1],
             materialization_end_sequence=latest_event.sequence,
+            memory_slice_kind=memory_slice_kind,
             reason="session_finalized",
             start_sequence=prompts[0].sequence,
         )

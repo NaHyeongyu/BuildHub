@@ -658,6 +658,12 @@ def _prompt_activity_items(
 
     return [
         {
+            "continuation_of": payloads[event.id].get("continuation_of")
+            if isinstance(payloads[event.id].get("continuation_of"), str)
+            else None,
+            "delivery_mode": payloads[event.id].get("delivery_mode")
+            if payloads[event.id].get("delivery_mode") in {"unknown", "queued", "interrupt"}
+            else None,
             "file_changes": prompt_changes.get(str(event.id), []),
             "files_changed": len(
                 {change["path"] for change in prompt_changes.get(str(event.id), [])}
@@ -673,8 +679,14 @@ def _prompt_activity_items(
             else None,
             "prompt_truncated": payloads[event.id].get("prompt_truncated") is True,
             **prompt_responses.get(str(event.id), {}),
+            "root_prompt_event_id": payloads[event.id].get("root_prompt_event_id")
+            if isinstance(payloads[event.id].get("root_prompt_event_id"), str)
+            else None,
             "sequence": event.sequence,
             "session_id": str(event.session_id) if event.session_id is not None else None,
+            "submission_context": payloads[event.id].get("submission_context")
+            if payloads[event.id].get("submission_context") in {"idle", "during_output"}
+            else None,
             "submitted_at": iso(event.created_at),
         }
         for event in prompt_events

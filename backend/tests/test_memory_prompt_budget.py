@@ -129,6 +129,17 @@ def test_memory_draft_prompt_requests_a_result_instead_of_an_event_log() -> None
     assert '"outcome": "2-4 concise sentences' in prompt
 
 
+def test_memory_draft_prompt_preserves_reasoning_slices_and_requirements() -> None:
+    context = _context(draft_count=1)
+    context["pending_drafts"][0]["memory_slice_kind"] = "reasoning"
+
+    prompt = prompts.build_memory_draft_prompt(context)
+
+    assert '"memory_slice_kind": "reasoning"' in prompt
+    assert '"requirements": [' in prompt
+    assert "Do not invent implementation work" in prompt
+
+
 def test_memory_draft_prompt_marks_collected_content_as_untrusted_data() -> None:
     prompt = prompts.build_memory_draft_prompt(_context(draft_count=1))
 

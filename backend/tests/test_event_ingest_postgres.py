@@ -159,7 +159,7 @@ def test_multi_session_memory_prefilter_runs_only_complete_first_windows(
 ) -> None:
     project_id = uuid4()
     due_session_id = uuid4()
-    incomplete_session_id = uuid4()
+    reasoning_session_id = uuid4()
     finalized_session_id = uuid4()
     generated: list[tuple[UUID, bool]] = []
     monkeypatch.setattr(events_service, "memory_slice_prompt_target", lambda: 1)
@@ -187,13 +187,13 @@ def test_multi_session_memory_prefilter_runs_only_complete_first_windows(
             ),
             _event(
                 project_id=project_id,
-                session_id=incomplete_session_id,
+                session_id=reasoning_session_id,
                 sequence=1,
             ),
             _event(
                 event_type="ResponseReceived",
                 project_id=project_id,
-                session_id=incomplete_session_id,
+                session_id=reasoning_session_id,
                 sequence=2,
             ),
             _event(
@@ -225,6 +225,7 @@ def test_multi_session_memory_prefilter_runs_only_complete_first_windows(
     assert sorted(generated, key=lambda item: str(item[0])) == sorted(
         [
             (due_session_id, False),
+            (reasoning_session_id, False),
             (finalized_session_id, True),
         ],
         key=lambda item: str(item[0]),

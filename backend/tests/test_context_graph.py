@@ -12,6 +12,7 @@ from app.schemas.context_graph import ContextGraphResponse
 from app.services.context_graph import (
     build_approved_project_memory_graph,
     build_context_graph_projection,
+    build_knowledge_space_projection,
 )
 from app.services.memory.constants import (
     MEMORY_ARTIFACT_TYPE,
@@ -168,6 +169,10 @@ def test_human_graph_projects_exact_lineage_without_patch_text() -> None:
         "prompt": 1,
         "response": 1,
         "file": 1,
+        "decision": 0,
+        "requirement": 0,
+        "brainstorm": 0,
+        "open_question": 0,
         "memory": 2,
     }
     assert sum(edge["kind"] == "captured_in" for edge in serialized["edges"]) == 1
@@ -265,11 +270,186 @@ def test_human_graph_reserves_capacity_for_files_and_memories() -> None:
         "prompt": 4,
         "response": 4,
         "file": 1,
+        "decision": 0,
+        "requirement": 0,
+        "brainstorm": 0,
+        "open_question": 0,
         "memory": 1,
     }
     assert validated["truncated"] is True
     assert any(edge["kind"] == "changed" for edge in validated["edges"])
     assert any(edge["kind"] == "captured_in" for edge in validated["edges"])
+
+
+def test_human_graph_projects_generated_knowledge_as_evidence_linked_memory_nodes() -> None:
+    now = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
+    project_id = uuid4()
+    session_id = uuid4()
+    prompt_id = uuid4()
+    prompt = Event(
+        id=prompt_id,
+        project_id=project_id,
+        session_id=session_id,
+        sequence=1,
+        schema_version=1,
+        tool="codex-cli",
+        event_type="PromptSubmitted",
+        payload={},
+        created_at=now,
+    )
+    memory = _artifact(
+        artifact_type=MEMORY_ARTIFACT_TYPE,
+        project_id=project_id,
+        session_id=session_id,
+        prompt_event_ids=[str(prompt_id)],
+        metadata={
+            "artifact_stage": "generated_memory",
+            "knowledge_projection": {
+                "nodes": [
+                    {
+                        "confidence": 0.9,
+                        "evidence_type": "inferred",
+                        "id": "candidate-1",
+                        "kind": "decision",
+                        "label": "Use a right-side review drawer.",
+                        "source_chunk_ids": ["draft-1"],
+                        "source_event_ids": [str(prompt_id)],
+                        "status": "active",
+                        "summary": "The user keeps project context visible during review.",
+                    }
+                ],
+                "schema_version": 1,
+                "source": "memory_generation",
+            },
+            "review_state": "generated",
+        },
+    )
+
+    payload = build_context_graph_projection(
+        limit=20,
+        memories=[memory],
+        patches=[],
+        project_id=project_id,
+        prompt_events=[prompt],
+        prompt_payloads={prompt_id: {"prompt": "Simplify the review flow"}},
+        query=None,
+        response_pairs={},
+    )
+    validated = ContextGraphResponse.model_validate(payload).model_dump()
+    knowledge_node = next(
+        node for node in validated["nodes"] if node["metadata"].get("subtype") == "decision"
+    )
+
+    assert knowledge_node["kind"] == "decision"
+    assert knowledge_node["agent_visible"] is False
+    assert knowledge_node["metadata"]["evidence_type"] == "inferred"
+    assert knowledge_node["metadata"]["review_state"] == "unreviewed"
+    assert any(
+        edge["source"] == knowledge_node["id"]
+        and edge["target"] == f"prompt:{prompt_id}"
+        and edge["kind"] == "derived_from"
+        and edge["inferred"] is True
+        for edge in validated["edges"]
+    )
+
+
+def test_knowledge_space_prioritizes_knowledge_and_keeps_outputs_as_detail_evidence() -> None:
+    now = datetime(2026, 7, 25, 12, 0, tzinfo=UTC)
+    project_id = uuid4()
+    session_id = uuid4()
+    prompt_id = uuid4()
+    response_id = uuid4()
+    prompt = Event(
+        id=prompt_id,
+        project_id=project_id,
+        session_id=session_id,
+        sequence=1,
+        schema_version=1,
+        tool="codex-cli",
+        event_type="PromptSubmitted",
+        payload={},
+        created_at=now,
+    )
+    response = Event(
+        id=response_id,
+        project_id=project_id,
+        session_id=session_id,
+        sequence=2,
+        schema_version=1,
+        tool="codex-cli",
+        event_type="ResponseReceived",
+        payload={},
+        created_at=now,
+    )
+    memory = _artifact(
+        artifact_type=MEMORY_ARTIFACT_TYPE,
+        project_id=project_id,
+        session_id=session_id,
+        prompt_event_ids=[str(prompt_id)],
+        metadata={
+            "artifact_stage": "generated_memory",
+            "knowledge_projection": {
+                "nodes": [
+                    {
+                        "confidence": 0.93,
+                        "evidence_type": "inferred",
+                        "id": "candidate-output-only",
+                        "kind": "decision",
+                        "label": "Show only output-derived knowledge on the map.",
+                        "review_state": "confirmed",
+                        "reviewed_at": "2026-07-25T12:05:00+00:00",
+                        "source_chunk_ids": ["draft-1"],
+                        "source_event_ids": [str(prompt_id)],
+                        "status": "active",
+                        "summary": "Raw prompts and files remain detail evidence.",
+                    }
+                ],
+                "schema_version": 1,
+                "source": "memory_generation",
+            },
+            "review_state": "generated",
+        },
+    )
+
+    payload = build_knowledge_space_projection(
+        limit=20,
+        memories=[memory],
+        prompt_events=[prompt],
+        prompt_payloads={prompt_id: {"prompt": "Simplify the knowledge map"}},
+        query=None,
+        response_pairs={
+            str(prompt_id): (
+                response,
+                {
+                    "response": "Use a small layered knowledge map and move evidence to details.",
+                    "success": True,
+                },
+            )
+        },
+    )
+    validated = ContextGraphResponse.model_validate(payload).model_dump()
+    kinds = {node["kind"] for node in validated["nodes"]}
+    knowledge_node = next(
+        node for node in validated["nodes"] if node["kind"] == "decision"
+    )
+
+    assert "file" not in kinds
+    assert {"decision", "memory", "prompt", "response"}.issubset(kinds)
+    assert knowledge_node["metadata"]["review_state"] == "confirmed"
+    assert knowledge_node["metadata"]["reviewed_at"] == "2026-07-25T12:05:00+00:00"
+    assert knowledge_node["metadata"]["source_event_count"] == 1
+    assert any(
+        edge["source"] == knowledge_node["id"]
+        and edge["kind"] == "derived_from"
+        and edge["target"] == f"prompt:{prompt_id}"
+        for edge in validated["edges"]
+    )
+    assert any(
+        edge["source"] == f"prompt:{prompt_id}"
+        and edge["kind"] == "answered_by"
+        and edge["target"] == f"response:{response_id}"
+        for edge in validated["edges"]
+    )
 
 
 def test_agent_graph_withholds_generated_memory_and_searches_only_approved_snapshot() -> None:
@@ -312,7 +492,18 @@ def test_agent_graph_withholds_generated_memory_and_searches_only_approved_snaps
                     ],
                     "open_questions": [],
                     "product_goal": "Make past implementation work easy to retrieve.",
+                    "requirements": [
+                        "Keep pending prompts visible before generation.",
+                    ],
                     "rejected_directions": [],
+                    "superseded_decisions": [
+                        {
+                            "decision": "Use a centered modal.",
+                            "superseded_by": "Use a right-side drawer.",
+                            "reason": "The drawer keeps source context visible.",
+                            "source_memory_ids": ["memory-1", "memory-2"],
+                        }
+                    ],
                     "technical_assumptions": [],
                 },
             },
@@ -327,11 +518,42 @@ def test_agent_graph_withholds_generated_memory_and_searches_only_approved_snaps
     validated = ContextGraphResponse.model_validate(payload).model_dump()
 
     assert validated["nodes"]
-    assert {node["kind"] for node in validated["nodes"]} == {"memory"}
+    assert {node["kind"] for node in validated["nodes"]} == {"decision", "memory"}
     assert all(node["agent_visible"] is True for node in validated["nodes"])
     assert all(node["session_id"] is None for node in validated["nodes"])
     assert "reference data" in validated["safety_notice"]
     assert "PostgreSQL" in json.dumps(validated)
+
+    requirement_payload = ContextGraphResponse.model_validate(
+        build_approved_project_memory_graph(
+            approved,
+            limit=20,
+            query="pending prompts visible",
+        )
+    ).model_dump()
+    requirement = next(
+        node for node in requirement_payload["nodes"] if node["kind"] == "requirement"
+    )
+    assert requirement["agent_visible"] is True
+    assert requirement["metadata"]["evidence_type"] == "recorded"
+    assert requirement["metadata"]["status"] == "active"
+
+    superseded_payload = ContextGraphResponse.model_validate(
+        build_approved_project_memory_graph(
+            approved,
+            limit=20,
+            query=None,
+        )
+    ).model_dump()
+    old_decision = next(
+        node
+        for node in superseded_payload["nodes"]
+        if node["metadata"].get("status") == "superseded"
+    )
+    assert any(
+        edge["kind"] == "supersedes" and edge["target"] == old_decision["id"]
+        for edge in superseded_payload["edges"]
+    )
 
 
 def test_agent_graph_exposes_only_safe_files_from_approved_project_memory() -> None:
@@ -403,3 +625,13 @@ def test_context_graph_routes_publish_the_shared_strict_contract() -> None:
         parameter["name"]: parameter for parameter in agent["parameters"]
     }["q"]["schema"]["anyOf"]
     assert any(variant.get("minLength") == 2 for variant in agent_query_variants)
+
+    review = paths[
+        "/api/projects/{project_id}/context-graph/nodes/{node_id}/review"
+    ]["patch"]
+    assert review["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ContextGraphNodeReviewRequest"
+    )
+    assert review["responses"]["200"]["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("/ContextGraphNodeReviewResponse")

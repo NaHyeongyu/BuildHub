@@ -397,8 +397,9 @@ def _due_memory_session_ids(
     session, even when a batch only contained the first prompt for hundreds of
     sessions. This query evaluates the first uncovered window for every
     response/file/finalization-triggered session together. Per-session work is
-    then reserved for sessions that have a prompt followed by both generation
-    inputs inside that window.
+    then reserved for sessions that have a prompt followed by an AI response
+    inside that window. File evidence is optional so reasoning-only work is not
+    discarded.
     """
 
     # A prompt normally arrives before its response/file markers, but the
@@ -519,7 +520,6 @@ def _due_memory_session_ids(
         .group_by(prompt_bounds.c.session_id)
         .having(
             func.count(Event.id).filter(Event.event_type == "ResponseReceived") > 0,
-            func.count(Event.id).filter(Event.event_type == "FilesChanged") > 0,
         )
     )
     return set(db.scalars(statement))

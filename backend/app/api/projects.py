@@ -11,7 +11,11 @@ from app.api.transactions import commit_or_conflict as _commit_or_conflict
 from app.core.security import require_web_user
 from app.db.session import get_db
 from app.models.users import User
-from app.schemas.context_graph import ContextGraphResponse
+from app.schemas.context_graph import (
+    ContextGraphNodeReviewRequest,
+    ContextGraphNodeReviewResponse,
+    ContextGraphResponse,
+)
 from app.schemas.projects import (
     ProjectBookmarkUpdateRequest,
     ProjectCreateRequest,
@@ -39,7 +43,10 @@ from app.services.github_repositories import (
     read_github_repository_file_content,
     read_github_repository_tree,
 )
-from app.services.context_graph import read_project_context_graph
+from app.services.context_graph import (
+    read_project_context_graph,
+    review_project_context_graph_node,
+)
 from app.services.projects.management import (
     create_project_summary,
     delete_project as delete_project_for_user,
@@ -272,6 +279,7 @@ def read_project_context_graph_route(
     project_id: UUID,
     q: str | None = Query(default=None, max_length=120),
     limit: int = Query(default=20, ge=1, le=40),
+    view: Literal["context", "knowledge"] = Query(default="context"),
     current_user: User = Depends(require_web_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -281,7 +289,30 @@ def read_project_context_graph_route(
         project_id=project_id,
         query=q,
         user=current_user,
+        view=view,
     )
+
+
+@router.patch(
+    "/{project_id}/context-graph/nodes/{node_id}/review",
+    response_model=ContextGraphNodeReviewResponse,
+)
+def review_project_context_graph_node_route(
+    project_id: UUID,
+    node_id: str,
+    payload: ContextGraphNodeReviewRequest,
+    current_user: User = Depends(require_web_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    response = review_project_context_graph_node(
+        db,
+        action=payload.action,
+        node_id=node_id,
+        project_id=project_id,
+        user=current_user,
+    )
+    _commit_or_conflict(db, detail="Knowledge node review could not be updated.")
+    return response
 
 
 @router.get(

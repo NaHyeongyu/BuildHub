@@ -117,6 +117,7 @@ def _source_memory_context(artifact: Artifact) -> dict[str, Any]:
         "draft_details": metadata.get("draft_details"),
         "draft_type": metadata.get("draft_type"),
         "id": str(artifact.id),
+        "knowledge_projection": metadata.get("knowledge_projection"),
         "memory_scope": metadata.get("memory_scope"),
         "outcome": artifact.outcome,
         "reason": artifact.reason,
@@ -297,7 +298,7 @@ def _local_project_memory_snapshot_from_context(
     workflow = [
         "Raw Events are stored for every captured event.",
         "Pending Memory Drafts are created after 20 prompts, session end, or 1 hour of idle time.",
-        "Captured work is converted into user-facing generated memories with AI answer and file-change evidence.",
+        "Captured work is converted into user-facing generated memories with AI answer evidence and file-change evidence when present.",
         "The user generates all pending drafts into context memories with one action.",
         "Generated memories use Summary, Tasks, Decisions, and Follow-ups.",
         "Generated memories are saved to History and Project Memory is recompiled immediately.",
@@ -307,7 +308,7 @@ def _local_project_memory_snapshot_from_context(
         workflow = [
             "수집된 모든 이벤트를 원시 이벤트로 저장합니다.",
             "프롬프트 20개, 세션 종료 또는 1시간 유휴 후 대기 메모리 초안을 만듭니다.",
-            "수집 작업을 AI 응답과 파일 변경 근거가 포함된 사용자용 메모리로 변환합니다.",
+            "수집 작업을 AI 응답 근거와, 있는 경우 파일 변경 근거가 포함된 사용자용 메모리로 변환합니다.",
             "사용자는 한 번의 작업으로 모든 대기 초안을 컨텍스트 메모리로 생성합니다.",
             "생성 메모리는 요약, 작업, 결정 및 후속 작업 구조를 사용합니다.",
             "생성 메모리를 기록에 저장하고 프로젝트 메모리를 즉시 다시 컴파일합니다.",
@@ -317,7 +318,7 @@ def _local_project_memory_snapshot_from_context(
         workflow = [
             "取得したすべてのイベントをRaw Eventsとして保存します。",
             "20プロンプト、セッション終了、または1時間のアイドル後に保留メモリ下書きを作成します。",
-            "取得作業をAI応答とファイル変更の根拠を含むユーザー向けメモリに変換します。",
+            "取得作業をAI応答の根拠と、存在する場合はファイル変更の根拠を含むユーザー向けメモリに変換します。",
             "ユーザーは1回の操作ですべての保留下書きをコンテキストメモリに生成します。",
             "生成メモリは要約、タスク、決定、フォローアップの構造を使用します。",
             "生成メモリを履歴に保存し、プロジェクトメモリをすぐに再コンパイルします。",
@@ -405,7 +406,9 @@ def _local_project_memory_snapshot_from_context(
                 "instructions_for_future_ai_agents": future_instructions,
                 "open_questions": [],
                 "product_goal": product_goal,
+                "requirements": [],
                 "rejected_directions": [],
+                "superseded_decisions": [],
                 "technical_assumptions": technical_assumptions,
             },
             "snapshot_type": "project_memory",
@@ -442,6 +445,20 @@ def _project_memory_payload(
                     if isinstance(item, dict)
                 ),
                 "title": "Important Decisions",
+            }
+        )
+    requirements = (
+        sections.get("requirements")
+        if isinstance(sections.get("requirements"), list)
+        else []
+    )
+    if requirements:
+        rendered_sections.append(
+            {
+                "summary": " / ".join(
+                    item for item in requirements[:6] if isinstance(item, str)
+                ),
+                "title": "Requirements",
             }
         )
     return {
