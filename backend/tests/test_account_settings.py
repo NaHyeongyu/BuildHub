@@ -146,7 +146,7 @@ def test_account_overview_response_includes_connection_and_tokens(monkeypatch) -
     assert response["user"]["preferred_locale"] == "en"
     assert response["github_connection"]["connected"] is False
     assert response["collector_tokens"][0]["name"] == "Local laptop"
-    assert response["latest_collector_version"] == "0.1.4"
+    assert response["latest_collector_version"] == "0.1.7"
     assert response["policy_consents"]["policy_accepted"] is False
 
 
