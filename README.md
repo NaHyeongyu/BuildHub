@@ -145,16 +145,14 @@ Configure the client to start:
 }
 ```
 
-The server exposes two owner-scoped, read-only tools:
+The server exposes one owner-scoped, read-only tool:
 
 ```text
 get_project_context
-search_project_context
 ```
 
-The first returns the latest approved Project Memory. The second searches approved memory
-nodes and their safe file references with recorded relationship provenance. Neither tool can
-return raw prompts, responses, or patch bodies, modify the project, or write back into memory.
+It returns the latest approved Project Memory. It cannot return raw prompts, responses, or
+patch bodies, modify the project, or write back into memory.
 See the [Agent Context guide](./docs/agent-context.md) for details.
 
 ## What gets captured
@@ -340,7 +338,6 @@ and queued events separate. Events are queued by project and session at:
 | [Collector verification](./docs/codex-hook-verification.md) | Real Codex hook smoke path |
 | [Memory architecture](./docs/memory-architecture.md) | Project Memory model and roadmap |
 | [Agent Context](./docs/agent-context.md) | CLI and MCP context retrieval |
-| [Context graph storage](./docs/context-graph-storage.md) | Safe graph projection, deletion, embeddings, and context packs |
 | [Artifact model](./docs/artifact-model.md) | Generated and reviewed memory artifacts |
 | [Database](./docs/database.md) | PostgreSQL schema and migrations |
 | [Deployment](./docs/aws-github-deployment.md) | AWS and GitHub Actions production runbook |

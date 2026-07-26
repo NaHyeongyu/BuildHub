@@ -10,10 +10,7 @@ _SENSITIVE_QUERY_PATHS = frozenset(
     }
 )
 
-_SENSITIVE_PROJECT_QUERY_SUFFIXES = (
-    "/context-graph",
-    "/prompt-activities",
-)
+_SENSITIVE_PROJECT_QUERY_SUFFIXES = ("/prompt-activities",)
 
 
 def _is_sensitive_query_path(path: str) -> bool:
@@ -24,9 +21,7 @@ def _is_sensitive_query_path(path: str) -> bool:
         _SENSITIVE_PROJECT_QUERY_SUFFIXES
     ):
         return True
-    return normalized_path.startswith("/api/agent/projects/") and normalized_path.endswith(
-        "/context/search"
-    )
+    return False
 
 
 def _redact_sensitive_query(target: object) -> object:

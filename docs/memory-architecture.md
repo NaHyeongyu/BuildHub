@@ -48,11 +48,6 @@ Promty currently uses a pull-request-style memory pipeline:
   the batch and returns `202`; a separate worker generates bounded chunks,
   checkpoints each successful provider result, and marks consumed drafts only
   after finalization.
-- The same provider response produces the user-facing memory and a bounded
-  semantic projection. There is no second knowledge-extraction model call.
-- Inferred semantic nodes can be confirmed or excluded from the Context Graph.
-  Reviews are versioned with the source memory; rejected nodes are omitted from
-  the next Project Memory compilation.
 - Generated `MemoryTask` artifacts are shown in History and can be edited or removed through the memory APIs.
 - Artifact generation is recorded in `artifact_generation_jobs`.
 - Project Memory is compiled from generated and user-edited memories, not pending drafts.
@@ -86,9 +81,6 @@ The response reports configured providers and active generators without returnin
 ## Next Build Order
 
 1. Add generated-memory CRUD coverage for every History action.
-2. Measure keyword retrieval quality and graph size before adding embeddings.
-3. Materialize semantic nodes only when read-projection latency justifies it.
-4. Add reviewed task-specific context packs and cited Project Chat answers.
 
 ## Memory Artifact
 

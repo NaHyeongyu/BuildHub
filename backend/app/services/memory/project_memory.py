@@ -117,7 +117,6 @@ def _source_memory_context(artifact: Artifact) -> dict[str, Any]:
         "draft_details": metadata.get("draft_details"),
         "draft_type": metadata.get("draft_type"),
         "id": str(artifact.id),
-        "knowledge_projection": metadata.get("knowledge_projection"),
         "memory_scope": metadata.get("memory_scope"),
         "outcome": artifact.outcome,
         "reason": artifact.reason,

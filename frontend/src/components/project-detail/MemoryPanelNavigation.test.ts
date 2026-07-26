@@ -5,21 +5,19 @@ import {
   nextMemoryPanelView,
 } from "./MemoryPanel";
 
-describe("MemoryPanel graph navigation", () => {
-  it("keeps the graph in the keyboard-operable tab cycle", () => {
-    expect(MEMORY_PANEL_VIEWS).toEqual(["history", "current", "graph"]);
+describe("MemoryPanel navigation", () => {
+  it("keeps history and current memory in the keyboard-operable tab cycle", () => {
+    expect(MEMORY_PANEL_VIEWS).toEqual(["history", "current"]);
     expect(nextMemoryPanelView("history", "ArrowRight")).toBe("current");
-    expect(nextMemoryPanelView("current", "ArrowRight")).toBe("graph");
-    expect(nextMemoryPanelView("graph", "ArrowRight")).toBe("history");
-    expect(nextMemoryPanelView("history", "ArrowLeft")).toBe("graph");
+    expect(nextMemoryPanelView("current", "ArrowRight")).toBe("history");
+    expect(nextMemoryPanelView("history", "ArrowLeft")).toBe("current");
     expect(nextMemoryPanelView("current", "Home")).toBe("history");
-    expect(nextMemoryPanelView("history", "End")).toBe("graph");
+    expect(nextMemoryPanelView("history", "End")).toBe("current");
   });
 
-  it("links the graph tab and panel with ARIA controls", () => {
-    expect(memoryPanelSource).toContain('aria-controls="memory-view-panel-graph"');
-    expect(memoryPanelSource).toContain('aria-labelledby="memory-view-tab-graph"');
-    expect(memoryPanelSource).toContain("<ContextGraphPanel");
+  it("renders the two memory views", () => {
+    expect(memoryPanelSource).toContain('data-memory-view="history"');
+    expect(memoryPanelSource).toContain('data-memory-view="current"');
   });
 
   it("uses deletion, not inclusion toggles, in the generation review", () => {

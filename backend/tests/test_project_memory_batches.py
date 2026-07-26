@@ -681,58 +681,6 @@ def test_batch_memory_keeps_complete_chunk_details() -> None:
     assert not memory.payload["outcome"].endswith("...")
 
 
-def test_batch_memory_consolidates_generated_knowledge_projection() -> None:
-    project_id = uuid4()
-    snapshot = _snapshot()
-    projection = {
-        "nodes": [
-            {
-                "confidence": 0.9,
-                "evidence_type": "inferred",
-                "id": "candidate-1",
-                "kind": "decision",
-                "label": "Keep PostgreSQL as the source of truth.",
-                "source_chunk_ids": [str(snapshot.id)],
-                "source_event_ids": ["event-1"],
-                "status": "active",
-                "summary": "It already owns the authoritative event lineage.",
-            }
-        ],
-        "schema_version": 1,
-        "source": "memory_generation",
-    }
-    chunks = [
-        batches.GeneratedChunkPayload(
-            first_event_at=None,
-            last_event_at=None,
-            metadata={"knowledge_projection": projection},
-            payload={"summary": "Generated context"},
-            source_draft_ids=[str(snapshot.id)],
-            source_draft_version_ids=[str(snapshot.version_id)],
-            source_session_id=str(uuid4()),
-        ),
-        batches.GeneratedChunkPayload(
-            first_event_at=None,
-            last_event_at=None,
-            metadata={"knowledge_projection": projection},
-            payload={"summary": "Duplicate context"},
-            source_draft_ids=[str(snapshot.id)],
-            source_draft_version_ids=[str(snapshot.version_id)],
-            source_session_id=str(uuid4()),
-        ),
-    ]
-    prepared = batches.BatchAttemptSnapshot(
-        batch_id=uuid4(),
-        chunk_generations=[],
-        project_id=project_id,
-        project_name="Promty",
-        snapshot_manifest=[],
-        source_session_ids=[],
-    )
-
-    memory = batches._prepare_project_batch_memory(batch=prepared, chunks=chunks)
-
-    assert memory.extra_metadata["knowledge_projection"] == projection
 
 
 def test_generation_failure_does_not_consume_any_snapshot_draft(monkeypatch) -> None:
