@@ -4,6 +4,8 @@ from argparse import Namespace
 import json
 from pathlib import Path
 
+import pytest
+
 from cli import _push_captured_event
 from events import BaseEvent, PromptSubmittedPayload
 from uploader.queue import JSONLQueue
@@ -48,6 +50,34 @@ def test_queue_quarantines_conflict_before_acknowledging_it(tmp_path: Path) -> N
     assert record["conflict"]["reason"] == "sequence conflict"
     assert record["event"]["id"] == conflict["id"]
     assert conflict_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_queue_quarantine_ignores_events_without_valid_ids(tmp_path: Path) -> None:
+    queue = JSONLQueue(tmp_path / "events.jsonl")
+    valid = {"id": "event-1", "sequence": 1}
+    invalid = {"id": "", "sequence": 2}
+    queue.path.write_text(
+        json.dumps(valid) + "\n" + json.dumps(invalid) + "\n",
+        encoding="utf-8",
+    )
+
+    conflict_path = queue.quarantine([valid, invalid], reason="sequence conflict")
+
+    records = [
+        json.loads(line)
+        for line in conflict_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["event"] for record in records] == [valid]
+    assert queue.read_batch(10) == [invalid]
+
+
+def test_queue_quarantine_rejects_events_without_any_valid_id(tmp_path: Path) -> None:
+    queue = JSONLQueue(tmp_path / "events.jsonl")
+
+    with pytest.raises(ValueError, match="without an id"):
+        queue.quarantine([{"sequence": 1}], reason="sequence conflict")
+
+    assert not queue.conflict_path.exists()
 
 
 def test_captured_event_is_mirrored_with_the_same_identity(tmp_path: Path) -> None:

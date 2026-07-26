@@ -1179,6 +1179,15 @@ def _process_command(pid: int) -> str | None:
     return command if result.returncode == 0 and command else None
 
 
+def _is_legacy_watch_command(command: str | None, queue_paths: Sequence[Path]) -> bool:
+    return bool(
+        command
+        and " upload " in f" {command} "
+        and "--watch" in command
+        and any(str(path) in command for path in queue_paths)
+    )
+
+
 def _legacy_uploader_status(profile: str) -> tuple[bool, str]:
     legacy_root = _legacy_profile_root(profile)
     pid = _read_pid(legacy_root / "uploader.pid")
@@ -1186,9 +1195,7 @@ def _legacy_uploader_status(profile: str) -> tuple[bool, str]:
         return True, "not running"
     command = _process_command(pid)
     queue_paths = (legacy_root / "events", legacy_root / "events.jsonl")
-    if command and " upload " in f" {command} " and "--watch" in command and any(
-        str(path) in command for path in queue_paths
-    ):
+    if _is_legacy_watch_command(command, queue_paths):
         return False, f"legacy uploader pid {pid}; rerun init to retire it safely"
     return True, f"pid {pid} does not match a legacy Promty uploader"
 
@@ -1209,44 +1216,40 @@ def _retire_legacy_uploader(profile: str | None) -> bool:
         return False
     legacy_root = _legacy_profile_root(profile)
     pid_path = legacy_root / "uploader.pid"
-    pid = _read_pid(pid_path)
-    if pid is None or not _pid_is_running(pid):
-        return False
+    with locked_file(legacy_root / "uploader.retire.lock"):
+        pid = _read_pid(pid_path)
+        if pid is None or not _pid_is_running(pid):
+            return False
 
-    command = _process_command(pid)
-    queue_paths = (legacy_root / "events", legacy_root / "events.jsonl")
-    if not (
-        command
-        and " upload " in f" {command} "
-        and "--watch" in command
-        and any(str(path) in command for path in queue_paths)
-    ):
-        print(
-            f"Refusing to stop pid {pid}: it is not a verified legacy Promty uploader.",
-            file=sys.stderr,
+        command = _process_command(pid)
+        queue_paths = (legacy_root / "events", legacy_root / "events.jsonl")
+        if not _is_legacy_watch_command(command, queue_paths):
+            print(
+                f"Refusing to stop pid {pid}: it is not a verified legacy Promty uploader.",
+                file=sys.stderr,
+            )
+            return False
+
+        _stop_uploader_process(pid)
+        retired_queues: list[Path] = []
+        for queue_path in queue_paths:
+            if not queue_path.is_file():
+                continue
+            retired_path = _available_retired_path(queue_path, pid=pid)
+            queue_path.rename(retired_path)
+            retired_queues.append(retired_path)
+
+        retired_pid_path = pid_path.with_name(f"{pid_path.name}.stopped-{pid}")
+        if pid_path.exists() and not retired_pid_path.exists():
+            pid_path.rename(retired_pid_path)
+
+        queue_message = (
+            ", ".join(str(path) for path in retired_queues)
+            if retired_queues
+            else "no legacy queue file"
         )
-        return False
-
-    _stop_uploader_process(pid)
-    retired_queues: list[Path] = []
-    for queue_path in queue_paths:
-        if not queue_path.is_file():
-            continue
-        retired_path = _available_retired_path(queue_path, pid=pid)
-        queue_path.rename(retired_path)
-        retired_queues.append(retired_path)
-
-    retired_pid_path = pid_path.with_name(f"{pid_path.name}.stopped-{pid}")
-    if pid_path.exists() and not retired_pid_path.exists():
-        pid_path.rename(retired_pid_path)
-
-    queue_message = (
-        ", ".join(str(path) for path in retired_queues)
-        if retired_queues
-        else "no legacy queue file"
-    )
-    print(f"Retired legacy Promty uploader pid {pid}; preserved {queue_message}")
-    return True
+        print(f"Retired legacy Promty uploader pid {pid}; preserved {queue_message}")
+        return True
 
 
 def start_uploader(args: argparse.Namespace) -> int:

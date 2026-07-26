@@ -75,11 +75,12 @@ class JSONLQueue:
     def quarantine(self, events: list[dict[str, Any]], *, reason: str) -> Path:
         """Preserve permanently rejected events outside the active retry queue."""
 
-        event_ids = {
-            event_id
+        valid_events = [
+            event
             for event in events
             if isinstance((event_id := event.get("id")), str) and event_id
-        }
+        ]
+        event_ids = {str(event["id"]) for event in valid_events}
         if not event_ids:
             raise ValueError("Cannot quarantine events without an id")
 
@@ -93,7 +94,7 @@ class JSONLQueue:
                 ensure_ascii=False,
             )
             + "\n"
-            for event in events
+            for event in valid_events
         )
         with self._locked():
             # Preserve first, then remove from the active queue. A crash can create

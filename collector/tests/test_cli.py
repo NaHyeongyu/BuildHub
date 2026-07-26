@@ -586,6 +586,8 @@ def test_init_retirement_stops_only_verified_legacy_uploader(
     ).read_text(encoding="utf-8") == '{"id":"event-1"}\n'
     assert not (profile_root / "uploader.pid").exists()
     assert (profile_root / "uploader.pid.stopped-94591").exists()
+    assert not cli._retire_legacy_uploader("prod")
+    assert stopped == [94591]
 
 
 def test_init_retirement_refuses_unrelated_process(
