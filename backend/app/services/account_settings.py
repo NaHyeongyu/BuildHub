@@ -19,7 +19,7 @@ from app.services.collector_versions import get_latest_collector_version
 
 # This fallback must be a version that is already available from npm. Bump it
 # only after the matching collector package has been published successfully.
-LATEST_COLLECTOR_VERSION = "0.1.4"
+LATEST_COLLECTOR_VERSION = "0.1.7"
 
 
 def _iso(value: Any) -> str | None:
