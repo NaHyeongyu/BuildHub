@@ -47,10 +47,8 @@ npx promty-collector@latest context --profile prod --format json
 }
 ```
 
-The MCP server provides `get_project_context` for the latest approved memory and
-`search_project_context` for owner-scoped search across approved memory nodes and safe file
-references. Both tools are read-only; search results never include raw prompts, responses, or
-patch bodies.
+The MCP server provides `get_project_context` for the latest approved memory. The tool is
+read-only and never includes raw prompts, responses, or patch bodies.
 
 ## Collection and privacy boundaries
 

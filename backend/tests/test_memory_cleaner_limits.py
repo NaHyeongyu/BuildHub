@@ -213,12 +213,6 @@ def test_draft_payload_metadata_stores_generation_summary_not_full_response(
     draft_metadata = payloads[0][1]
     assert "overall_uncertainties" not in draft_metadata
     assert draft_metadata["overall_uncertainty_count"] == 7
-    assert draft_metadata["knowledge_projection"]["schema_version"] == 1
-    assert {node["kind"] for node in draft_metadata["knowledge_projection"]["nodes"]} == {
-        "decision",
-        "open_question",
-        "requirement",
-    }
 
 
 def test_draft_payload_keeps_complete_generated_detail() -> None:

@@ -32,12 +32,8 @@ def test_sensitive_query_filter_redacts_github_callback_query() -> None:
 
 def test_sensitive_query_filter_redacts_project_context_queries() -> None:
     targets = (
-        "/api/projects/123/context-graph?q=private+architecture",
-        "/api/projects/123/context-graph/?q=private+architecture",
         "/api/projects/123/prompt-activities?q=private+architecture",
         "/api/projects/123/prompt-activities/?q=private+architecture",
-        "/api/agent/projects/123/context/search?q=private+architecture",
-        "/api/agent/projects/123/context/search/?q=private+architecture",
     )
 
     for target in targets:

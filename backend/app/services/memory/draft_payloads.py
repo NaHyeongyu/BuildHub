@@ -10,7 +10,6 @@ from app.services.memory.context import (
     truncate,
 )
 from app.services.memory.errors import MemoryGenerationError
-from app.services.memory.knowledge import build_memory_knowledge_projection
 from app.services.memory.providers import (
     generator_for_provider,
     model_metadata_for_provider,
@@ -249,7 +248,6 @@ def build_memory_draft_payloads_from_context(
             "draft_evidence": draft.get("evidence"),
             "draft_index": index,
             "draft_type": draft.get("type"),
-            "knowledge_projection": build_memory_knowledge_projection(draft),
             "needs_user_verification": draft.get("needs_user_verification") is True,
             "overall_uncertainty_count": len(
                 response.get("overall_uncertainties", [])

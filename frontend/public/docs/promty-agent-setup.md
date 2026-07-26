@@ -112,10 +112,9 @@ For MCP clients, configure the read-only server with:
 }
 ```
 
-The server exposes two read-only tools: `get_project_context` reads the latest approved Project
-Memory, and `search_project_context` searches approved memory nodes and safe file references.
-Search requires a `query`; optional `limit` accepts 1-20 results. Raw prompts, responses, and
-patch bodies are never returned through the agent search boundary.
+The server exposes the read-only `get_project_context` tool for the latest approved Project
+Memory. Raw prompts, responses, and patch bodies are never returned through the agent context
+boundary.
 
 ## Updates
 

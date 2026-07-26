@@ -12,7 +12,6 @@ import {
   ChevronRight,
   FileText,
   MessageSquareText,
-  Network,
   Search,
   ShieldCheck,
   Sparkles,
@@ -26,7 +25,6 @@ import {
 } from "../../api/projects";
 import { useI18n } from "../../i18n/I18nProvider";
 import { MarkdownContent } from "../MarkdownContent";
-import { ContextGraphPanel } from "./ContextGraphPanel";
 import { displayMemoryOutcome } from "./memoryOutcome";
 import { focusableModalElements } from "./modalFocus";
 import type {
@@ -36,7 +34,7 @@ import type {
 
 export type MemoryGenerationResult = ProjectMemoryGenerationResponse;
 
-export type MemoryPanelView = "current" | "graph" | "history";
+export type MemoryPanelView = "current" | "history";
 
 type MemoryReviewBrowseMode = "prompts" | "sessions";
 
@@ -47,7 +45,7 @@ type MemoryReviewDeletionTarget =
 const REVIEW_TEXT_PREVIEW_CHARACTERS = 320;
 const REVIEW_TEXT_PREVIEW_LINES = 6;
 
-export const MEMORY_PANEL_VIEWS: MemoryPanelView[] = ["history", "current", "graph"];
+export const MEMORY_PANEL_VIEWS: MemoryPanelView[] = ["history", "current"];
 
 function memoryReviewPromptMatches(
   prompt: MemoryGenerationReviewPrompt,
@@ -1827,20 +1825,6 @@ export function MemoryPanel({
           >
             <span>{t("memory.currentTab")}</span>
           </button>
-          <button
-            aria-controls="memory-view-panel-graph"
-            aria-selected={activeMemoryView === "graph"}
-            data-active={activeMemoryView === "graph" || undefined}
-            data-memory-view="graph"
-            id="memory-view-tab-graph"
-            onClick={() => selectMemoryView("graph")}
-            role="tab"
-            tabIndex={activeMemoryView === "graph" ? 0 : -1}
-            type="button"
-          >
-            <Network aria-hidden="true" size={14} strokeWidth={1.7} />
-            <span>{t("memory.graph")}</span>
-          </button>
         </div>
 
         {activeMemoryView === "current" ? (
@@ -1914,19 +1898,6 @@ export function MemoryPanel({
                 <p>{t("memory.currentEmptyDescription")}</p>
               </div>
             )}
-          </div>
-        ) : activeMemoryView === "graph" ? (
-          <div
-            aria-labelledby="memory-view-tab-graph"
-            className="bh-memory-view-panel"
-            id="memory-view-panel-graph"
-            role="tabpanel"
-            tabIndex={0}
-          >
-            <ContextGraphPanel
-              onOpenSession={onOpenSession}
-              projectId={data.project.id}
-            />
           </div>
         ) : (
           <div

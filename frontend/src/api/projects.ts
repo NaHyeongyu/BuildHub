@@ -75,64 +75,6 @@ export type MemoryGenerationReviewResponse = {
   source_code_included: false;
 };
 
-export type ProjectContextGraphNodeKind =
-  | "prompt"
-  | "response"
-  | "file"
-  | "decision"
-  | "requirement"
-  | "brainstorm"
-  | "open_question"
-  | "memory";
-
-export type ProjectContextGraphNode = {
-  agent_visible: boolean;
-  id: string;
-  kind: ProjectContextGraphNodeKind;
-  label: string;
-  metadata: Record<string, unknown>;
-  occurred_at: string | null;
-  sequence: number | null;
-  session_id: string | null;
-  summary: string | null;
-};
-
-export type ProjectContextGraphEdgeKind =
-  | "answered_by"
-  | "changed"
-  | "captured_in"
-  | "derived_from"
-  | "references"
-  | "supersedes";
-
-export type ProjectContextGraphEdge = {
-  id: string;
-  inferred: boolean;
-  kind: ProjectContextGraphEdgeKind;
-  source: string;
-  target: string;
-};
-
-export type ProjectContextGraphResponse = {
-  edges: ProjectContextGraphEdge[];
-  facets: Record<string, number>;
-  nodes: ProjectContextGraphNode[];
-  query: string | null;
-  safety_notice: string;
-  truncated: boolean;
-};
-
-export type ProjectContextGraphNodeReviewAction =
-  | "confirm"
-  | "reject"
-  | "reset";
-
-export type ProjectContextGraphNodeReviewResponse = {
-  node_id: string;
-  review_state: "confirmed" | "rejected" | "unreviewed";
-  reviewed_at: string | null;
-};
-
 export type ProjectCreatePayload = {
   default_branch?: string | null;
   description?: string | null;
@@ -583,54 +525,6 @@ export function fetchProjectMemoryArtifacts(
     { signal },
     {
       errorMessage: "Memory history request failed",
-    },
-  );
-}
-
-export function fetchProjectContextGraph(
-  projectId: string,
-  {
-    limit = 40,
-    query,
-    signal,
-  }: {
-    limit?: number;
-    query?: string;
-    signal?: AbortSignal;
-  } = {},
-): Promise<ProjectContextGraphResponse> {
-  const boundedLimit = Number.isFinite(limit)
-    ? Math.min(40, Math.max(1, Math.trunc(limit)))
-    : 40;
-  const params = new URLSearchParams({ limit: String(boundedLimit) });
-  params.set("view", "knowledge");
-  if (query?.trim()) {
-    params.set("q", query.trim());
-  }
-  return requestJson<ProjectContextGraphResponse>(
-    `/api/projects/${encodeURIComponent(projectId)}/context-graph?${params}`,
-    { signal },
-    {
-      errorMessage: "Context graph request failed",
-      unauthorizedMessage: "Sign in again before loading the context graph.",
-    },
-  );
-}
-
-export function reviewProjectContextGraphNode(
-  projectId: string,
-  nodeId: string,
-  action: ProjectContextGraphNodeReviewAction,
-): Promise<ProjectContextGraphNodeReviewResponse> {
-  return requestJsonBody<ProjectContextGraphNodeReviewResponse>(
-    `/api/projects/${encodeURIComponent(
-      projectId,
-    )}/context-graph/nodes/${encodeURIComponent(nodeId)}/review`,
-    "PATCH",
-    { action },
-    {
-      errorMessage: "Knowledge node review update failed",
-      unauthorizedMessage: "Sign in again before reviewing project knowledge.",
     },
   );
 }
