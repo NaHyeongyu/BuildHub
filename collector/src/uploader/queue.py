@@ -68,6 +68,42 @@ class JSONLQueue:
             for queue_file in self._queue_files():
                 self._ack_file(queue_file, event_ids)
 
+    @property
+    def conflict_path(self) -> Path:
+        return self.path.with_name(f"{self.path.name}.conflicts.jsonl")
+
+    def quarantine(self, events: list[dict[str, Any]], *, reason: str) -> Path:
+        """Preserve permanently rejected events outside the active retry queue."""
+
+        valid_events = [
+            event
+            for event in events
+            if isinstance((event_id := event.get("id")), str) and event_id
+        ]
+        event_ids = {str(event["id"]) for event in valid_events}
+        if not event_ids:
+            raise ValueError("Cannot quarantine events without an id")
+
+        conflict_path = self.conflict_path
+        records = "".join(
+            json.dumps(
+                {
+                    "conflict": {"reason": reason},
+                    "event": event,
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+            for event in valid_events
+        )
+        with self._locked():
+            # Preserve first, then remove from the active queue. A crash can create
+            # a duplicate conflict record but cannot silently lose the event.
+            append_private_text(conflict_path, records)
+            for queue_file in self._queue_files():
+                self._ack_file(queue_file, event_ids)
+        return conflict_path
+
     def _event_path(self, event: BaseEvent) -> Path:
         if self.root is None:
             return self.path

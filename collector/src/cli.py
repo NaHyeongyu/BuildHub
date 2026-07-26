@@ -16,7 +16,7 @@ from typing import Any, Literal
 from urllib import error, parse, request
 import webbrowser
 
-from environment import migrate_legacy_data_root
+from environment import LEGACY_DATA_ROOT, migrate_legacy_data_root
 
 from adapters import normalize_collector_event, should_ignore_collector_event
 from change_tracking import ChangeBaselineStore, derive_prompt_lineage, detect_changes
@@ -54,7 +54,7 @@ from mcp_server import PromtyMCPServer, run_mcp_server
 from sequence import SequenceStore
 from session_index import SessionIndex
 from secure_storage import ensure_private_parent, open_private_text, write_private_text_atomic
-from uploader.client import PromtyUploader
+from uploader.client import EventBatchConflict, PromtyUploader
 from uploader.queue import JSONLQueue
 from updater import auto_update
 from version import COLLECTOR_VERSION
@@ -86,6 +86,7 @@ DEFAULT_INIT_PROFILE: Profile = "prod"
 AUTO_UPDATE_INTERVAL_SECONDS = 6 * 60 * 60
 HEARTBEAT_INTERVAL_SECONDS = 60
 UPLOADER_STOP_TIMEOUT_SECONDS = 5.0
+MAX_UPLOAD_RETRY_SECONDS = 60.0
 CODEX_HOOKS: tuple[dict[str, Any], ...] = (
     {
         "event": "UserPromptSubmit",
@@ -542,6 +543,40 @@ def capture_changes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _upload_event_batch(
+    queue: JSONLQueue,
+    uploader: PromtyUploader,
+    events: list[dict[str, Any]],
+) -> int:
+    if not events:
+        return 0
+    try:
+        uploaded_ids = uploader.upload_events(events)
+    except EventBatchConflict as exc:
+        if len(events) > 1:
+            midpoint = len(events) // 2
+            return _upload_event_batch(
+                queue,
+                uploader,
+                events[:midpoint],
+            ) + _upload_event_batch(
+                queue,
+                uploader,
+                events[midpoint:],
+            )
+        conflict_path = queue.quarantine(events, reason=exc.detail)
+        event_id = events[0].get("id")
+        print(
+            f"Quarantined conflicting event {event_id} in {conflict_path}: {exc.detail}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 0
+
+    queue.ack(set(uploaded_ids))
+    return len(uploaded_ids)
+
+
 def _upload_queued_events(args: argparse.Namespace) -> int:
     queue = JSONLQueue(args.queue_path)
     events = queue.read_batch(args.limit)
@@ -553,9 +588,7 @@ def _upload_queued_events(args: argparse.Namespace) -> int:
         token=resolve_token(args.token, args.config_path),
         timeout=args.timeout,
     )
-    uploaded_ids = uploader.upload_events(events)
-    queue.ack(set(uploaded_ids))
-    return len(uploaded_ids)
+    return _upload_event_batch(queue, uploader, events)
 
 
 def _send_heartbeat(args: argparse.Namespace) -> None:
@@ -580,6 +613,7 @@ def upload(args: argparse.Namespace) -> int:
     print(f"Watching queue {JSONLQueue(args.queue_path).path} -> {api_url} every {interval:g}s")
     next_update_check = 0.0
     next_heartbeat = 0.0
+    consecutive_failures = 0
     while True:
         try:
             now = time.monotonic()
@@ -599,11 +633,23 @@ def upload(args: argparse.Namespace) -> int:
             uploaded_count = _upload_queued_events(args)
             if uploaded_count:
                 print(f"Uploaded {uploaded_count} events", flush=True)
+            consecutive_failures = 0
         except KeyboardInterrupt:
             print("Stopped uploader watch")
             return 0
         except Exception as exc:
-            print(f"Upload failed: {exc}", file=sys.stderr, flush=True)
+            consecutive_failures += 1
+            retry_seconds = min(
+                MAX_UPLOAD_RETRY_SECONDS,
+                interval * (2 ** min(consecutive_failures - 1, 8)),
+            )
+            print(
+                f"Upload failed: {exc}; retrying in {retry_seconds:g}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(retry_seconds)
+            continue
         time.sleep(interval)
 
     return 0
@@ -1112,7 +1158,102 @@ def _read_pid(path: Path) -> int | None:
         return None
 
 
+def _legacy_profile_root(profile: str) -> Path:
+    return LEGACY_DATA_ROOT / "profiles" / profile
+
+
+def _process_command(pid: int) -> str | None:
+    if os.name == "nt":
+        return None
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    command = result.stdout.strip()
+    return command if result.returncode == 0 and command else None
+
+
+def _is_legacy_watch_command(command: str | None, queue_paths: Sequence[Path]) -> bool:
+    return bool(
+        command
+        and " upload " in f" {command} "
+        and "--watch" in command
+        and any(str(path) in command for path in queue_paths)
+    )
+
+
+def _legacy_uploader_status(profile: str) -> tuple[bool, str]:
+    legacy_root = _legacy_profile_root(profile)
+    pid = _read_pid(legacy_root / "uploader.pid")
+    if pid is None or not _pid_is_running(pid):
+        return True, "not running"
+    command = _process_command(pid)
+    queue_paths = (legacy_root / "events", legacy_root / "events.jsonl")
+    if _is_legacy_watch_command(command, queue_paths):
+        return False, f"legacy uploader pid {pid}; rerun init to retire it safely"
+    return True, f"pid {pid} does not match a legacy Promty uploader"
+
+
+def _available_retired_path(path: Path, *, pid: int) -> Path:
+    candidate = path.with_name(f"{path.name}.conflict-legacy-{pid}.jsonl")
+    suffix = 1
+    while candidate.exists():
+        candidate = path.with_name(
+            f"{path.name}.conflict-legacy-{pid}-{suffix}.jsonl"
+        )
+        suffix += 1
+    return candidate
+
+
+def _retire_legacy_uploader(profile: str | None) -> bool:
+    if profile not in PROFILE_URLS:
+        return False
+    legacy_root = _legacy_profile_root(profile)
+    pid_path = legacy_root / "uploader.pid"
+    with locked_file(legacy_root / "uploader.retire.lock"):
+        pid = _read_pid(pid_path)
+        if pid is None or not _pid_is_running(pid):
+            return False
+
+        command = _process_command(pid)
+        queue_paths = (legacy_root / "events", legacy_root / "events.jsonl")
+        if not _is_legacy_watch_command(command, queue_paths):
+            print(
+                f"Refusing to stop pid {pid}: it is not a verified legacy Promty uploader.",
+                file=sys.stderr,
+            )
+            return False
+
+        _stop_uploader_process(pid)
+        retired_queues: list[Path] = []
+        for queue_path in queue_paths:
+            if not queue_path.is_file():
+                continue
+            retired_path = _available_retired_path(queue_path, pid=pid)
+            queue_path.rename(retired_path)
+            retired_queues.append(retired_path)
+
+        retired_pid_path = pid_path.with_name(f"{pid_path.name}.stopped-{pid}")
+        if pid_path.exists() and not retired_pid_path.exists():
+            pid_path.rename(retired_pid_path)
+
+        queue_message = (
+            ", ".join(str(path) for path in retired_queues)
+            if retired_queues
+            else "no legacy queue file"
+        )
+        print(f"Retired legacy Promty uploader pid {pid}; preserved {queue_message}")
+        return True
+
+
 def start_uploader(args: argparse.Namespace) -> int:
+    _retire_legacy_uploader(getattr(args, "profile", None))
     pid_path = Path(args.pid_path).expanduser() if args.pid_path else DEFAULT_UPLOADER_PID_PATH
     log_path = Path(args.log_path).expanduser() if args.log_path else DEFAULT_UPLOADER_LOG_PATH
     config_path = (
@@ -1277,6 +1418,20 @@ def _queue_status(queue_path: str | None) -> tuple[bool, str]:
     return True, f"{len(queue_files)} session queue files under {queue.path}"
 
 
+def _queue_conflict_status(queue_path: str | None) -> tuple[bool, str]:
+    conflict_path = JSONLQueue(queue_path).conflict_path
+    if not conflict_path.is_file():
+        return True, "none"
+    try:
+        with open_private_text(conflict_path, "r") as file:
+            conflict_count = sum(1 for line in file if line.strip())
+    except OSError as exc:
+        return False, f"cannot read {conflict_path}: {exc}"
+    if conflict_count == 0:
+        return True, "none"
+    return False, f"{conflict_count} quarantined event(s) in {conflict_path}"
+
+
 def _doctor_hook_checks(
     args: argparse.Namespace,
     *,
@@ -1331,6 +1486,12 @@ def _doctor_runtime_checks(
         )
     )
     checks.append((f"{prefix}queue", *_queue_status(args.queue_path)))
+    checks.append(
+        (
+            f"{prefix}queue-conflicts",
+            *_queue_conflict_status(args.queue_path),
+        )
+    )
     checks.append((f"{prefix}backend", *_health_status(api_url, args.timeout)))
     checks.append(
         (
@@ -1347,6 +1508,14 @@ def _doctor_runtime_checks(
             f"pid {pid}" if pid is not None and _pid_is_running(pid) else "not running",
         )
     )
+    profile = getattr(args, "profile", None)
+    if profile in PROFILE_URLS:
+        checks.append(
+            (
+                f"{prefix}legacy-uploader",
+                *_legacy_uploader_status(profile),
+            )
+        )
     return checks
 
 
@@ -1415,6 +1584,7 @@ def _start_uploader_for_init(args: argparse.Namespace) -> None:
         pid_path=args.pid_path,
         queue_path=args.queue_path,
         no_auto_update=args.no_auto_update,
+        profile=args.profile,
         restart=True,
         # login() persists an explicit init token in the profile config. Let the
         # uploader reload that file instead of freezing the token in its environment.

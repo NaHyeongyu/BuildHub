@@ -2,9 +2,30 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib import request
+from urllib import error, request
 
 from version import COLLECTOR_VERSION
+
+
+class EventBatchConflict(RuntimeError):
+    """A permanent server-side conflict for one or more queued events."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+def _http_error_detail(exc: error.HTTPError) -> str:
+    try:
+        payload = json.loads(exc.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return "Event batch conflicts with activity already stored by Promty."
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return (
+        detail
+        if isinstance(detail, str) and detail.strip()
+        else "Event batch conflicts with activity already stored by Promty."
+    )
 
 
 class PromtyUploader:
@@ -31,8 +52,13 @@ class PromtyUploader:
             headers=headers,
             method="POST",
         )
-        with request.urlopen(req, timeout=self.timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            with request.urlopen(req, timeout=self.timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            if exc.code == 409:
+                raise EventBatchConflict(_http_error_detail(exc)) from exc
+            raise
 
         event_ids = payload.get("event_ids")
         if isinstance(event_ids, list):
