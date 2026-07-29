@@ -4,7 +4,7 @@ import logging
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.transactions import commit_or_conflict as _commit_or_conflict
@@ -33,10 +33,11 @@ from app.schemas.project_responses import (
     PublicProjectViewResponse,
     PublicProfileResponse,
 )
+from app.schemas.memory_responses import ProjectWorkspaceResponse
 from app.services.github_repositories import (
     list_github_repositories,
     read_github_repository_file_content,
-    read_github_repository_tree,
+    read_github_repository_tree_with_etag,
 )
 from app.services.projects.management import (
     create_project_summary,
@@ -64,6 +65,7 @@ from app.services.projects.views import (
     read_project_files_response,
     read_project_prompt_activities_response,
 )
+from app.services.memory.workflows import read_project_workspace_response
 from app.services.published_flow_asset_storage import delete_published_flow_asset
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -262,6 +264,23 @@ def read_project_detail(
     return read_project_detail_response(project_id, current_user, db)
 
 
+@router.get("/{project_id}/workspace", response_model=ProjectWorkspaceResponse)
+def read_project_workspace(
+    project_id: UUID,
+    pending_limit: int = Query(default=100, ge=1, le=100),
+    current_user: User = Depends(require_web_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    response = read_project_workspace_response(
+        db,
+        pending_limit=pending_limit,
+        project_id=project_id,
+        user=current_user,
+    )
+    db.commit()
+    return response
+
+
 @router.get(
     "/{project_id}/prompt-activities",
     response_model=ProjectPromptActivitiesResponse,
@@ -376,14 +395,47 @@ def update_project_bookmark(
     return response
 
 
-@router.get("/{project_id}/github/files", response_model=ProjectGithubFilesResponse)
+@router.get(
+    "/{project_id}/github/files",
+    response_model=ProjectGithubFilesResponse,
+    responses={304: {"description": "Repository tree has not changed"}},
+)
 def read_project_github_files(
     project_id: UUID,
+    response: Response,
+    if_none_match: str | None = Header(default=None, max_length=256),
+    x_promty_repository_tree_key: str | None = Header(default=None, max_length=64),
     current_user: User = Depends(require_web_user),
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+) -> dict[str, Any] | Response:
     project = _project_for_user(db, project_id, current_user, allow_admin=True)
-    return read_github_repository_tree(db, project=project, user=current_user)
+    result = read_github_repository_tree_with_etag(
+        db,
+        if_none_match=if_none_match,
+        project=project,
+        tree_key=x_promty_repository_tree_key,
+        user=current_user,
+    )
+    if result.etag:
+        response.headers["ETag"] = result.etag
+    if result.tree_key:
+        response.headers["X-Promty-Repository-Tree-Key"] = result.tree_key
+    if result.not_modified:
+        headers = {}
+        if result.etag:
+            headers["ETag"] = result.etag
+        if result.tree_key:
+            headers["X-Promty-Repository-Tree-Key"] = result.tree_key
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED,
+            headers=headers or None,
+        )
+    if result.payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="GitHub repository tree response was invalid",
+        )
+    return result.payload
 
 
 @router.get(

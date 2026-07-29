@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastapi import HTTPException
 from urllib3.exceptions import HTTPError as Urllib3HTTPError
 
 from app.services import github_repository_client
+from app.services.github_repository_metrics import logger as metrics_logger
 
 
 class _Response:
-    def __init__(self, *, data: bytes = b"{}", status: int = 200) -> None:
+    def __init__(
+        self,
+        *,
+        data: bytes = b"{}",
+        headers: dict[str, str] | None = None,
+        status: int = 200,
+    ) -> None:
         self.data = data
+        self.headers = headers or {}
         self.status = status
 
 
@@ -38,6 +48,66 @@ def test_github_requests_share_the_module_connection_pool(monkeypatch: pytest.Mo
         ("GET", "https://api.github.com/user/repos"),
     ]
     assert all(call[2]["Authorization"] == "Bearer secret" for call in pool.calls)
+
+
+def test_conditional_request_forwards_etag_and_accepts_not_modified(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = _Pool([_Response(data=b"", status=304)])
+    monkeypatch.setattr(github_repository_client, "_GITHUB_HTTP", pool)
+    caplog.set_level(logging.INFO, logger=metrics_logger.name)
+
+    response = github_repository_client.github_request_with_etag(
+        "/repos/acme/demo/git/trees/main?recursive=1",
+        if_none_match='"tree-v1"',
+        token="secret",
+    )
+
+    assert response.not_modified is True
+    assert response.payload is None
+    assert response.etag == '"tree-v1"'
+    assert pool.calls[0][2]["If-None-Match"] == '"tree-v1"'
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == metrics_logger.name
+    )
+    assert "conditional=true" in message
+    assert "outcome=not_modified" in message
+    assert "status=304" in message
+
+
+def test_github_request_logs_low_cardinality_call_metrics(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = _Pool([
+        _Response(
+            data=b'{"tree": []}',
+            headers={"ETag": '"tree-v2"'},
+        )
+    ])
+    monkeypatch.setattr(github_repository_client, "_GITHUB_HTTP", pool)
+    caplog.set_level(logging.INFO, logger=metrics_logger.name)
+
+    response = github_repository_client.github_request_with_etag(
+        "/repos/acme/demo/git/trees/main?recursive=1",
+        if_none_match=None,
+        token="secret",
+    )
+
+    assert response.etag == '"tree-v2"'
+    records = [record for record in caplog.records if record.name == metrics_logger.name]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "github_operation=repository_tree" in message
+    assert "conditional=false" in message
+    assert "outcome=success" in message
+    assert "status=200" in message
+    assert "etag_received=true" in message
+    assert "acme/demo" not in message
+    assert "secret" not in message
 
 
 @pytest.mark.parametrize(

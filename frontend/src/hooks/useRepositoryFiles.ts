@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { UnauthorizedError } from "../api/client";
 import {
   fetchProjectGithubFiles,
@@ -15,6 +15,21 @@ type UseRepositoryFilesOptions = {
   initialPath: string | null;
   onUnauthorized: () => void;
 };
+
+export const REPOSITORY_TREE_CACHE_TTL_MS = 60_000;
+
+export function repositoryTreeCacheIsFresh(
+  cachedProjectId: string | null,
+  projectId: string,
+  loadedAt: number,
+  now = Date.now(),
+) {
+  return (
+    cachedProjectId === projectId &&
+    loadedAt > 0 &&
+    now - loadedAt < REPOSITORY_TREE_CACHE_TTL_MS
+  );
+}
 
 export function useRepositoryFiles({
   initialPath,
@@ -34,6 +49,14 @@ export function useRepositoryFiles({
     useState<string | null>(initialPath);
   const [isRepositoryFileContentLoading, setIsRepositoryFileContentLoading] =
     useState(false);
+  const projectGithubFilesCacheRef = useRef<{
+    etag: string | null;
+    loadedAt: number;
+    projectId: string;
+    treeKey: string | null;
+    value: ProjectGithubFilesState;
+  } | null>(null);
+  const repositoryFilesGenerationRef = useRef(0);
 
   const clearRepositoryFileContent = (path: string | null = null) => {
     setRepositoryFileContent(null);
@@ -49,6 +72,8 @@ export function useRepositoryFiles({
   };
 
   const clearRepositoryBrowserState = () => {
+    repositoryFilesGenerationRef.current += 1;
+    projectGithubFilesCacheRef.current = null;
     setProjectGithubFiles(null);
     setProjectGithubFilesError(null);
     setIsProjectGithubFilesLoading(false);
@@ -56,6 +81,8 @@ export function useRepositoryFiles({
   };
 
   const clearRepositoryFiles = () => {
+    repositoryFilesGenerationRef.current += 1;
+    projectGithubFilesCacheRef.current = null;
     setProjectGithubFiles(null);
     setProjectGithubFilesError(null);
     setIsProjectGithubFilesLoading(false);
@@ -65,14 +92,64 @@ export function useRepositoryFiles({
   const loadProjectGithubFiles = async (
     projectId: string,
     signal?: AbortSignal,
+    force = false,
   ) => {
+    const cached = projectGithubFilesCacheRef.current;
+    if (
+      !force &&
+      cached &&
+      repositoryTreeCacheIsFresh(
+        cached.projectId,
+        projectId,
+        cached.loadedAt,
+      )
+    ) {
+      return;
+    }
+    const requestGeneration = repositoryFilesGenerationRef.current;
     setIsProjectGithubFilesLoading(true);
     setProjectGithubFilesError(null);
     try {
-      const payload = await fetchProjectGithubFiles(projectId, signal);
-      setProjectGithubFiles(projectGithubFilesFromApi(payload));
+      const result = await fetchProjectGithubFiles(
+        projectId,
+        signal,
+        cached?.projectId === projectId ? cached.etag : null,
+        cached?.projectId === projectId ? cached.treeKey : null,
+      );
+      if (
+        signal?.aborted ||
+        requestGeneration !== repositoryFilesGenerationRef.current
+      ) {
+        return;
+      }
+      const currentCache = projectGithubFilesCacheRef.current;
+      if (result.notModified && currentCache?.projectId === projectId) {
+        projectGithubFilesCacheRef.current = {
+          ...currentCache,
+          etag: result.etag ?? currentCache.etag,
+          loadedAt: Date.now(),
+          treeKey: result.treeKey ?? currentCache.treeKey,
+        };
+        setProjectGithubFiles(currentCache.value);
+        return;
+      }
+      if (!result.payload) {
+        throw new Error("GitHub files request returned no repository tree");
+      }
+      const value = projectGithubFilesFromApi(result.payload);
+      setProjectGithubFiles(value);
+      projectGithubFilesCacheRef.current = {
+        etag: result.etag,
+        loadedAt: Date.now(),
+        projectId,
+        treeKey: result.treeKey,
+        value,
+      };
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      if (requestGeneration !== repositoryFilesGenerationRef.current) {
         return;
       }
       if (error instanceof UnauthorizedError) {
@@ -84,7 +161,10 @@ export function useRepositoryFiles({
         error instanceof Error ? error.message : "GitHub files request failed",
       );
     } finally {
-      if (!signal?.aborted) {
+      if (
+        !signal?.aborted &&
+        requestGeneration === repositoryFilesGenerationRef.current
+      ) {
         setIsProjectGithubFilesLoading(false);
       }
     }

@@ -42,6 +42,13 @@ type ApiErrorPayload = {
   detail: string | null;
 };
 
+export type ConditionalJsonResponse<T> = {
+  etag: string | null;
+  headers: Headers;
+  notModified: boolean;
+  payload: T | null;
+};
+
 const ENCRYPTED_DATA_UNAVAILABLE_CODE = "encrypted_data_unavailable";
 const LEGACY_ENCRYPTION_ERROR_DETAILS = new Set([
   "Application encryption key cannot decrypt stored data",
@@ -143,12 +150,15 @@ async function apiFetch(
   path: string,
   init: RequestInit = {},
   messages: ApiErrorMessages = {},
+  acceptedStatuses: readonly number[] = [],
 ) {
   let response = await fetchApi(path, init);
   if (response.status === 401 && canRefreshSession(path) && await refreshSession()) {
     response = await fetchApi(path, init);
   }
-  await assertOk(response, messages);
+  if (!acceptedStatuses.includes(response.status)) {
+    await assertOk(response, messages);
+  }
   return response;
 }
 
@@ -159,6 +169,42 @@ export async function requestJson<T>(
 ): Promise<T> {
   const response = await apiFetch(path, init, messages);
   return (await response.json()) as T;
+}
+
+export async function requestConditionalJson<T>(
+  path: string,
+  etag: string | null,
+  init: RequestInit = {},
+  messages: ApiErrorMessages = {},
+): Promise<ConditionalJsonResponse<T>> {
+  const headers = new Headers(init.headers);
+  if (etag) {
+    headers.set("If-None-Match", etag);
+  }
+  const response = await apiFetch(
+    path,
+    {
+      ...init,
+      headers,
+    },
+    messages,
+    [304],
+  );
+  const responseEtag = response.headers.get("ETag");
+  if (response.status === 304) {
+    return {
+      etag: responseEtag ?? etag,
+      headers: response.headers,
+      notModified: true,
+      payload: null,
+    };
+  }
+  return {
+    etag: responseEtag,
+    headers: response.headers,
+    notModified: false,
+    payload: (await response.json()) as T,
+  };
 }
 
 export async function requestJsonBody<T>(

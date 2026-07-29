@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib import parse
 from uuid import UUID
@@ -15,8 +17,10 @@ from app.models.github_connections import GitHubConnection
 from app.models.projects import Project
 from app.models.users import User
 from app.services.github_repository_client import (
+    GithubJsonResponse,
     github_list_request,
     github_request,
+    github_request_with_etag,
 )
 from app.services.github_repository_mappers import (
     MAX_CODE_VIEW_BYTES,
@@ -29,6 +33,14 @@ from app.services.github_repository_mappers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class GithubRepositoryTreeResult:
+    etag: str | None
+    not_modified: bool
+    payload: dict[str, Any] | None
+    tree_key: str | None
 
 
 def _connection_for_user(db: DBSession, user: User) -> GitHubConnection | None:
@@ -121,6 +133,46 @@ def _github_request_with_branch_refresh(
             refreshed_branch=refreshed_branch,
         )
         return payload, refreshed_branch
+
+
+def _github_tree_request_with_branch_refresh(
+    db: DBSession,
+    *,
+    branch: str,
+    expected_branch: str,
+    if_none_match: str | None,
+    owner: str,
+    project_id: UUID | None,
+    repo: str,
+    token: str,
+) -> tuple[GithubJsonResponse, str]:
+    def request_tree(value: str, etag: str | None) -> GithubJsonResponse:
+        return github_request_with_etag(
+            f"/repos/{owner}/{repo}/git/trees/{parse.quote(value, safe='')}?recursive=1",
+            if_none_match=etag,
+            token=token,
+        )
+
+    try:
+        return request_tree(branch, if_none_match), branch
+    except HTTPException as exc:
+        if not _is_github_not_found(exc):
+            raise
+
+        repository = github_request(f"/repos/{owner}/{repo}", token=token)
+        default_branch = repository.get("default_branch")
+        refreshed_branch = default_branch.strip() if isinstance(default_branch, str) else ""
+        if not refreshed_branch or refreshed_branch == branch:
+            raise
+
+        response = request_tree(refreshed_branch, None)
+        _persist_refreshed_default_branch(
+            db,
+            expected_branch=expected_branch,
+            project_id=project_id,
+            refreshed_branch=refreshed_branch,
+        )
+        return response, refreshed_branch
 
 
 def list_github_repositories(
@@ -216,49 +268,111 @@ def _repository_branch(*, default_branch: str) -> str:
     return branch if branch else "main"
 
 
+def _repository_tree_key(*, branch: str, owner: str, repo: str) -> str:
+    identity = f"{owner}/{repo}\0{branch}".encode()
+    return hashlib.sha256(identity).hexdigest()
+
+
 def read_github_repository_tree(
     db: DBSession,
     *,
     project: Project,
     user: User,
 ) -> dict[str, Any]:
+    result = read_github_repository_tree_with_etag(
+        db,
+        if_none_match=None,
+        project=project,
+        tree_key=None,
+        user=user,
+    )
+    if result.payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="GitHub repository tree response was invalid",
+        )
+    return result.payload
+
+
+def read_github_repository_tree_with_etag(
+    db: DBSession,
+    *,
+    if_none_match: str | None,
+    project: Project,
+    tree_key: str | None,
+    user: User,
+) -> GithubRepositoryTreeResult:
     project_id = project.id
     remote_url = project.git_remote
     expected_branch = project.default_branch
     branch = _repository_branch(default_branch=expected_branch)
     parsed = parse_github_repository(remote_url)
     if parsed is None:
-        return {
-            "available": False,
-            "files": [],
-            "message": "This project does not have a GitHub repository remote.",
-            "repository": None,
-            "status": "repository_not_connected",
-        }
+        return GithubRepositoryTreeResult(
+            etag=None,
+            not_modified=False,
+            payload={
+                "available": False,
+                "files": [],
+                "message": "This project does not have a GitHub repository remote.",
+                "repository": None,
+                "status": "repository_not_connected",
+            },
+            tree_key=None,
+        )
 
     token = _github_token_snapshot(db, user=user)
     if token is None:
-        return {
-            "available": False,
-            "files": [],
-            "message": "Sign in again with GitHub repository access to browse repository files.",
-            "repository": f"{parsed[0]}/{parsed[1]}",
-            "status": "github_repository_access_required",
-        }
+        return GithubRepositoryTreeResult(
+            etag=None,
+            not_modified=False,
+            payload={
+                "available": False,
+                "files": [],
+                "message": (
+                    "Sign in again with GitHub repository access to browse repository files."
+                ),
+                "repository": f"{parsed[0]}/{parsed[1]}",
+                "status": "github_repository_access_required",
+            },
+            tree_key=None,
+        )
 
     owner, repo = parsed
-    tree_payload, branch = _github_request_with_branch_refresh(
+    expected_tree_key = _repository_tree_key(
+        branch=branch,
+        owner=owner,
+        repo=repo,
+    )
+    tree_response, branch = _github_tree_request_with_branch_refresh(
         db,
         branch=branch,
         expected_branch=expected_branch,
+        if_none_match=if_none_match if tree_key == expected_tree_key else None,
         owner=owner,
         project_id=project_id,
         repo=repo,
-        request_path=lambda value: (
-            f"/repos/{owner}/{repo}/git/trees/{parse.quote(value, safe='')}?recursive=1"
-        ),
         token=token,
     )
+    response_tree_key = _repository_tree_key(
+        branch=branch,
+        owner=owner,
+        repo=repo,
+    )
+    if tree_response.not_modified:
+        return GithubRepositoryTreeResult(
+            etag=tree_response.etag or if_none_match,
+            not_modified=True,
+            payload=None,
+            tree_key=response_tree_key,
+        )
+
+    tree_payload = tree_response.payload
+    if not isinstance(tree_payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="GitHub repository tree response was invalid",
+        )
     tree = tree_payload.get("tree")
     if not isinstance(tree, list):
         raise HTTPException(
@@ -266,15 +380,20 @@ def read_github_repository_tree(
             detail="GitHub repository tree response was invalid",
         )
 
-    return {
-        "available": True,
-        "default_branch": branch,
-        "files": build_file_tree([item for item in tree if isinstance(item, dict)]),
-        "message": None,
-        "repository": f"{owner}/{repo}",
-        "status": "ok",
-        "truncated": tree_payload.get("truncated") is True,
-    }
+    return GithubRepositoryTreeResult(
+        etag=tree_response.etag,
+        not_modified=False,
+        payload={
+            "available": True,
+            "default_branch": branch,
+            "files": build_file_tree([item for item in tree if isinstance(item, dict)]),
+            "message": None,
+            "repository": f"{owner}/{repo}",
+            "status": "ok",
+            "truncated": tree_payload.get("truncated") is True,
+        },
+        tree_key=response_tree_key,
+    )
 
 
 def read_github_repository_file_content(

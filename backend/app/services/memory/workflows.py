@@ -45,6 +45,7 @@ from app.services.memory.batches import (
 )
 from app.services.memory.session_completion import complete_session_if_ready
 from app.services.projects.management import list_project_summaries
+from app.services.projects.views import read_project_detail_response
 
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,34 @@ def list_pending_memory_ranges_response(
 ) -> list[dict[str, Any]]:
     project = project_for_user(db, project_id, user, allow_admin=True)
     return list_project_memory_pending_ranges(db, project_id=project.id, limit=limit)
+
+
+def read_project_workspace_response(
+    db: DBSession,
+    *,
+    pending_limit: int,
+    project_id: UUID,
+    user: User,
+) -> dict[str, Any]:
+    detail = read_project_detail_response(project_id, user, db)
+    latest_batch = read_latest_project_memory_batch(db, project_id=project_id)
+    return {
+        **detail,
+        "memory": {
+            **detail["memory"],
+            "drafts": [],
+            "latest_batch": (
+                serialize_project_memory_batch(db, latest_batch, replayed=True)
+                if latest_batch is not None
+                else None
+            ),
+            "pending_ranges": list_project_memory_pending_ranges(
+                db,
+                project_id=project_id,
+                limit=pending_limit,
+            ),
+        },
+    }
 
 
 def refresh_memory_review_queue_response(

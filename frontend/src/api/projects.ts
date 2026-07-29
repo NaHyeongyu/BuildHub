@@ -21,7 +21,12 @@ import {
   previewRecordPublicProjectView,
   previewUpdatePublicProjectSave,
 } from "../workspace/communityPreviewData";
-import { requestJson, requestJsonBody, requestVoid } from "./client";
+import {
+  requestConditionalJson,
+  requestJson,
+  requestJsonBody,
+  requestVoid,
+} from "./client";
 
 export type ProjectDetailResourcesResponse = ProjectDetailApiResponse & {
   memory: NonNullable<ProjectDetailApiResponse["memory"]> & {
@@ -357,30 +362,13 @@ export async function fetchProjectDetailResources(
   projectId: string,
   signal?: AbortSignal,
 ): Promise<ProjectDetailResourcesResponse> {
-  const encodedProjectId = encodeURIComponent(projectId);
-  const [detail, pendingRanges, latestBatch] = await Promise.all([
-    requestJson<ProjectDetailApiResponse>(
-      `/api/projects/${encodedProjectId}/detail`,
-      { signal },
-      {
-        errorMessage: "Project detail request failed",
-      },
-    ),
-    fetchProjectMemoryPendingRanges(projectId, signal),
-    fetchLatestProjectMemoryBatch(projectId, signal),
-  ]);
-
-  return {
-    ...detail,
-    memory: {
-      latest_artifact_at: detail.memory?.latest_artifact_at ?? null,
-      latest_batch: latestBatch,
-      recent_artifacts: detail.memory?.recent_artifacts ?? [],
-      total_artifacts: detail.memory?.total_artifacts ?? 0,
-      drafts: [],
-      pending_ranges: pendingRanges,
+  return requestJson<ProjectDetailResourcesResponse>(
+    `/api/projects/${encodeURIComponent(projectId)}/workspace?pending_limit=100`,
+    { signal },
+    {
+      errorMessage: "Project detail request failed",
     },
-  };
+  );
 }
 
 export function fetchLatestProjectMemoryBatch(
@@ -529,17 +517,31 @@ export function fetchProjectMemoryArtifacts(
   );
 }
 
-export function fetchProjectGithubFiles(
+export async function fetchProjectGithubFiles(
   projectId: string,
   signal?: AbortSignal,
-): Promise<ProjectGithubFilesApiResponse> {
-  return requestJson<ProjectGithubFilesApiResponse>(
+  etag: string | null = null,
+  treeKey: string | null = null,
+) {
+  const result = await requestConditionalJson<ProjectGithubFilesApiResponse>(
     `/api/projects/${encodeURIComponent(projectId)}/github/files`,
-    { signal },
+    etag,
+    {
+      headers: treeKey
+        ? { "X-Promty-Repository-Tree-Key": treeKey }
+        : undefined,
+      signal,
+    },
     {
       errorMessage: "GitHub files request failed",
     },
   );
+  return {
+    etag: result.etag,
+    notModified: result.notModified,
+    payload: result.payload,
+    treeKey: result.headers.get("X-Promty-Repository-Tree-Key"),
+  };
 }
 
 export function fetchProjectFiles(

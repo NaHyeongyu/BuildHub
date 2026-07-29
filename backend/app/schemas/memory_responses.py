@@ -4,7 +4,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.schemas.project_responses import MemoryArtifactSummaryResponse
+from app.schemas.project_responses import (
+    MemoryArtifactSummaryResponse,
+    ProjectDetailMemoryResponse,
+    ProjectDetailResponse,
+)
 from app.schemas.projects import ProjectSummaryResponse
 
 
@@ -105,6 +109,16 @@ class MemoryBatchResponse(StrictResponse):
     source_draft_count: int
     source_session_ids: list[str]
     status: str | None
+
+
+class ProjectWorkspaceMemoryResponse(ProjectDetailMemoryResponse):
+    drafts: list[MemoryArtifactSummaryResponse]
+    latest_batch: MemoryBatchResponse | None
+    pending_ranges: list[PendingMemoryRangeResponse]
+
+
+class ProjectWorkspaceResponse(ProjectDetailResponse):
+    memory: ProjectWorkspaceMemoryResponse
 
 
 class MemoryProviderEstimateResponse(StrictResponse):

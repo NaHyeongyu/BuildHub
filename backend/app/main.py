@@ -50,7 +50,13 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
     allow_methods=["DELETE", "GET", "PATCH", "POST", "PUT", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "If-None-Match",
+        "X-Promty-Repository-Tree-Key",
+    ],
+    expose_headers=["ETag", "X-Promty-Repository-Tree-Key"],
     allow_credentials=True,
 )
 app.add_middleware(

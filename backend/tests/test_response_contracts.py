@@ -17,6 +17,9 @@ def test_project_detail_endpoints_publish_concrete_response_models() -> None:
     assert _response_schema("/api/projects/{project_id}/detail")["$ref"].endswith(
         "/ProjectDetailResponse"
     )
+    assert _response_schema("/api/projects/{project_id}/workspace")["$ref"].endswith(
+        "/ProjectWorkspaceResponse"
+    )
     assert _response_schema("/api/projects/{project_id}/prompt-activities")["$ref"].endswith(
         "/ProjectPromptActivitiesResponse"
     )

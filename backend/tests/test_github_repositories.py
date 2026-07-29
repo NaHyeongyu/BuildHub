@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from app.models.projects import Project
 from app.services import github_repositories
+from app.services.github_repository_client import GithubJsonResponse
 
 
 class _RecordingDB:
@@ -56,6 +57,20 @@ def _install_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _github_response(
+    payload: dict[str, Any] | None,
+    *,
+    etag: str | None = '"tree-etag"',
+    not_modified: bool = False,
+) -> GithubJsonResponse:
+    return GithubJsonResponse(
+        etag=etag,
+        not_modified=not_modified,
+        payload=payload,
+        status_code=304 if not_modified else 200,
+    )
+
+
 def test_tree_uses_stored_branch_with_one_github_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -64,19 +79,27 @@ def test_tree_uses_stored_branch_with_one_github_request(
     db = _RecordingDB(events)
     calls: list[tuple[str, str]] = []
 
-    def request(path: str, *, token: str) -> dict[str, Any]:
+    def request(
+        path: str,
+        *,
+        if_none_match: str | None,
+        token: str,
+    ) -> GithubJsonResponse:
         assert events == ["rollback"]
         events.append("remote")
         calls.append((path, token))
-        return {
-            "tree": [
-                {"path": "src", "type": "tree"},
-                {"path": "src/main.py", "type": "blob"},
-            ],
-            "truncated": False,
-        }
+        assert if_none_match is None
+        return _github_response(
+            {
+                "tree": [
+                    {"path": "src", "type": "tree"},
+                    {"path": "src/main.py", "type": "blob"},
+                ],
+                "truncated": False,
+            }
+        )
 
-    monkeypatch.setattr(github_repositories, "github_request", request)
+    monkeypatch.setattr(github_repositories, "github_request_with_etag", request)
 
     response = github_repositories.read_github_repository_tree(
         db,  # type: ignore[arg-type]
@@ -138,11 +161,17 @@ def test_empty_stored_branch_falls_back_to_main(monkeypatch: pytest.MonkeyPatch)
     db = _RecordingDB()
     paths: list[str] = []
 
-    def request(path: str, *, token: str) -> dict[str, Any]:
+    def request(
+        path: str,
+        *,
+        if_none_match: str | None,
+        token: str,
+    ) -> GithubJsonResponse:
         paths.append(path)
-        return {"tree": [], "truncated": False}
+        assert if_none_match is None
+        return _github_response({"tree": [], "truncated": False})
 
-    monkeypatch.setattr(github_repositories, "github_request", request)
+    monkeypatch.setattr(github_repositories, "github_request_with_etag", request)
 
     response = github_repositories.read_github_repository_tree(
         db,  # type: ignore[arg-type]
@@ -256,17 +285,33 @@ def test_tree_refreshes_stale_default_branch_and_persists_it(
     db = _RecordingDB(events)
     project = _project(branch="master")
 
-    def request(path: str, *, token: str) -> dict[str, Any]:
+    def tree_request(
+        path: str,
+        *,
+        if_none_match: str | None,
+        token: str,
+    ) -> GithubJsonResponse:
         assert token == "decrypted-token"
+        assert if_none_match is None
         events.append(f"remote:{path}")
         if path.endswith("/git/trees/master?recursive=1"):
             raise HTTPException(status_code=502, detail="GitHub not found: HTTP 404")
-        if path == "/repos/acme/demo":
-            return {"default_branch": "main"}
         assert path.endswith("/git/trees/main?recursive=1")
-        return {"tree": [{"path": "README.md", "type": "blob"}], "truncated": False}
+        return _github_response(
+            {
+                "tree": [{"path": "README.md", "type": "blob"}],
+                "truncated": False,
+            }
+        )
+
+    def request(path: str, *, token: str) -> dict[str, Any]:
+        assert token == "decrypted-token"
+        events.append(f"remote:{path}")
+        assert path == "/repos/acme/demo"
+        return {"default_branch": "main"}
 
     monkeypatch.setattr(github_repositories, "github_request", request)
+    monkeypatch.setattr(github_repositories, "github_request_with_etag", tree_request)
 
     response = github_repositories.read_github_repository_tree(
         db,  # type: ignore[arg-type]
@@ -342,11 +387,17 @@ def test_non_404_tree_error_does_not_refresh_branch(
     db = _RecordingDB()
     paths: list[str] = []
 
-    def request(path: str, *, token: str) -> dict[str, Any]:
+    def request(
+        path: str,
+        *,
+        if_none_match: str | None,
+        token: str,
+    ) -> GithubJsonResponse:
         paths.append(path)
+        assert if_none_match is None
         raise HTTPException(status_code=502, detail="GitHub request failed: HTTP 500")
 
-    monkeypatch.setattr(github_repositories, "github_request", request)
+    monkeypatch.setattr(github_repositories, "github_request_with_etag", request)
 
     with pytest.raises(HTTPException) as exc_info:
         github_repositories.read_github_repository_tree(
@@ -358,3 +409,84 @@ def test_non_404_tree_error_does_not_refresh_branch(
     assert exc_info.value.detail == "GitHub request failed: HTTP 500"
     assert paths == ["/repos/acme/demo/git/trees/release%2Fv2?recursive=1"]
     assert db.events == ["rollback"]
+
+
+def test_tree_forwards_etag_and_returns_not_modified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_connection(monkeypatch)
+    db = _RecordingDB()
+    calls: list[tuple[str, str | None]] = []
+
+    def request(
+        path: str,
+        *,
+        if_none_match: str | None,
+        token: str,
+    ) -> GithubJsonResponse:
+        assert token == "decrypted-token"
+        calls.append((path, if_none_match))
+        return _github_response(
+            None,
+            etag='"tree-v1"',
+            not_modified=True,
+        )
+
+    monkeypatch.setattr(github_repositories, "github_request_with_etag", request)
+    tree_key = github_repositories._repository_tree_key(
+        branch="release/v2",
+        owner="acme",
+        repo="demo",
+    )
+
+    response = github_repositories.read_github_repository_tree_with_etag(
+        db,  # type: ignore[arg-type]
+        if_none_match='"tree-v1"',
+        project=_project(),
+        tree_key=tree_key,
+        user=object(),  # type: ignore[arg-type]
+    )
+
+    assert response.not_modified is True
+    assert response.payload is None
+    assert response.etag == '"tree-v1"'
+    assert response.tree_key == tree_key
+    assert calls == [
+        (
+            "/repos/acme/demo/git/trees/release%2Fv2?recursive=1",
+            '"tree-v1"',
+        )
+    ]
+
+
+def test_tree_does_not_forward_etag_for_a_different_repository_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_connection(monkeypatch)
+    db = _RecordingDB()
+    forwarded_etags: list[str | None] = []
+
+    def request(
+        path: str,
+        *,
+        if_none_match: str | None,
+        token: str,
+    ) -> GithubJsonResponse:
+        assert path.endswith("/git/trees/release%2Fv2?recursive=1")
+        assert token == "decrypted-token"
+        forwarded_etags.append(if_none_match)
+        return _github_response({"tree": [], "truncated": False})
+
+    monkeypatch.setattr(github_repositories, "github_request_with_etag", request)
+
+    response = github_repositories.read_github_repository_tree_with_etag(
+        db,  # type: ignore[arg-type]
+        if_none_match='"tree-from-another-repository"',
+        project=_project(),
+        tree_key="different-repository-key",
+        user=object(),  # type: ignore[arg-type]
+    )
+
+    assert forwarded_etags == [None]
+    assert response.not_modified is False
+    assert response.payload is not None

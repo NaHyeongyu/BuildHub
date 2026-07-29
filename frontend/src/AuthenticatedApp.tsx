@@ -990,7 +990,7 @@ export function AuthenticatedApp() {
               onRetryRepositoryFiles={
                 activeProjectId
                   ? () => {
-                      void loadProjectGithubFiles(activeProjectId);
+                      void loadProjectGithubFiles(activeProjectId, undefined, true);
                     }
                   : undefined
               }

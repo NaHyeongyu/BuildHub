@@ -27,6 +27,18 @@ function useLatestRef<T>(value: T) {
   return ref;
 }
 
+export function adminOverviewPollingEnabled(
+  activeItem: SidebarItemId,
+  authStatus: AuthStatus,
+  currentUserIsAdmin: boolean | undefined,
+) {
+  return (
+    activeItem === "admin" &&
+    authStatus === "authenticated" &&
+    currentUserIsAdmin === true
+  );
+}
+
 export function useWorkspaceAdminEffect({
   activeItem,
   authStatus,
@@ -59,6 +71,9 @@ export function useWorkspaceAdminEffect({
           "replace",
         );
       }
+      return;
+    }
+    if (!adminOverviewPollingEnabled(activeItem, authStatus, currentUserIsAdmin)) {
       return;
     }
 
@@ -247,6 +262,7 @@ export function useWorkspaceProjectResourceEffects({
   const loadProjectFilesRef = useLatestRef(loadProjectFiles);
   const loadProjectGithubFilesRef = useLatestRef(loadProjectGithubFiles);
   const loadRepositoryFileContentRef = useLatestRef(loadRepositoryFileContent);
+  const selectedProjectRef = useLatestRef(selectedProject);
   const setProjectDetailRef = useLatestRef(setProjectDetail);
 
   useEffect(() => {
@@ -264,8 +280,13 @@ export function useWorkspaceProjectResourceEffects({
       return;
     }
 
-    if (isMockGithubUnlinkedProject(selectedProjectId) && selectedProject) {
-      setProjectDetailRef.current(mockGithubUnlinkedProjectDetail(selectedProject));
+    if (
+      isMockGithubUnlinkedProject(selectedProjectId) &&
+      selectedProjectRef.current
+    ) {
+      setProjectDetailRef.current(
+        mockGithubUnlinkedProjectDetail(selectedProjectRef.current),
+      );
       clearProjectFilesRef.current();
       clearRepositoryBrowserStateRef.current();
       return;
@@ -277,7 +298,7 @@ export function useWorkspaceProjectResourceEffects({
     clearRepositoryBrowserStateRef.current();
     void loadProjectDetailRef.current(
       selectedProjectId,
-      selectedProject,
+      selectedProjectRef.current,
       detailController.signal,
     );
     return () => {
@@ -290,10 +311,9 @@ export function useWorkspaceProjectResourceEffects({
     clearRepositoryBrowserStateRef,
     clearRepositoryFilesRef,
     loadProjectDetailRef,
-    loadProjectGithubFilesRef,
-    selectedProject,
     selectedProjectId,
     selectedProjectRouteKey,
+    selectedProjectRef,
     setProjectDetailRef,
   ]);
 

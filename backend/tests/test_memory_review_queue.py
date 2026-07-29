@@ -23,6 +23,80 @@ class FakeSession:
         return FakeNestedTransaction()
 
 
+def test_project_workspace_combines_detail_pending_ranges_and_latest_batch(
+    monkeypatch,
+) -> None:
+    project = SimpleNamespace(id=uuid4())
+    detail = {
+        "activities": [],
+        "files": [],
+        "memory": {
+            "latest_artifact_at": None,
+            "recent_artifacts": [],
+            "total_artifacts": 0,
+        },
+        "metrics": {},
+        "project": {"id": str(project.id)},
+        "prompt_activities": [],
+    }
+    latest_batch = object()
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        workflows,
+        "read_project_detail_response",
+        lambda project_id, user, db: (
+            calls.append(("detail", (project_id, user, db))) or detail
+        ),
+    )
+    monkeypatch.setattr(
+        workflows,
+        "read_latest_project_memory_batch",
+        lambda db, *, project_id: (
+            calls.append(("latest", (db, project_id))) or latest_batch
+        ),
+    )
+    monkeypatch.setattr(
+        workflows,
+        "serialize_project_memory_batch",
+        lambda db, batch, *, replayed: {
+            "batch_id": "batch-1",
+            "replayed": replayed,
+        },
+    )
+    monkeypatch.setattr(
+        workflows,
+        "list_project_memory_pending_ranges",
+        lambda db, *, project_id, limit: (
+            calls.append(("pending", (db, project_id, limit)))
+            or [{"draft_id": "draft-1"}]
+        ),
+    )
+
+    db = FakeSession()
+    user = object()
+    response = workflows.read_project_workspace_response(
+        db,
+        pending_limit=100,
+        project_id=project.id,
+        user=user,
+    )
+
+    assert response["memory"] == {
+        "drafts": [],
+        "latest_artifact_at": None,
+        "latest_batch": {"batch_id": "batch-1", "replayed": True},
+        "pending_ranges": [{"draft_id": "draft-1"}],
+        "recent_artifacts": [],
+        "total_artifacts": 0,
+    }
+    assert calls == [
+        ("detail", (project.id, user, db)),
+        ("latest", (db, project.id)),
+        ("pending", (db, project.id, 100)),
+    ]
+
+
 def test_review_queue_refresh_queries_ranges_only_for_projects_with_pending_work(
     monkeypatch,
 ) -> None:
